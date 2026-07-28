@@ -1,7 +1,10 @@
 # Build outputs
 /src-tauri/target/
+/src-tauri/gen/
 /dist/
 /node_modules/
+/.tools/
+/.svelte-check/
 /release/*
 !/release/.gitkeep
 

@@ -1,0 +1,17 @@
+[package]
+name = "easy-clipboard"
+version = "0.1.0"
+description = "A lightweight clipboard manager for Windows"
+authors = ["Kyaru Momochi"]
+edition = "2024"
+rust-version = "1.96"
+
+[lib]
+name = "easy_clipboard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.11.1", features = [] }
