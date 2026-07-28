@@ -1,0 +1,25 @@
+# Build outputs
+/src-tauri/target/
+/dist/
+/node_modules/
+/release/*
+!/release/.gitkeep
+
+# Local development state
+/.superpowers/
+/.idea/
+/.vscode/
+*.log
+
+# Local application data and secrets
+/.env
+/.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+
+# Windows
+Thumbs.db
+Desktop.ini
+
