@@ -16,10 +16,13 @@ tauri-build = { version = "=2.6.3", features = [] }
 [dependencies]
 cap-std = "=4.0.2"
 fs2 = "=0.4.3"
+image = { version = "=0.25.10", default-features = false, features = ["bmp", "png"] }
 rusqlite = { version = "=0.40.1", features = ["bundled", "functions"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tauri = { version = "=2.11.1", features = [] }
+unicode-segmentation = "=1.13.3"
 
 [dev-dependencies]
 tempfile = "3"

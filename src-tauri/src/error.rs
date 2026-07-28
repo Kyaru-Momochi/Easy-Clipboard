@@ -10,6 +10,7 @@ pub enum AppError {
     Storage,
     UnsupportedDatabaseVersion,
     InvalidClipboardItem,
+    InvalidClipboardImage,
     InvalidMotionScale,
     RepositoryInUse,
 }
@@ -23,6 +24,7 @@ impl AppError {
             Self::Storage => "storageError",
             Self::UnsupportedDatabaseVersion => "unsupportedDatabaseVersion",
             Self::InvalidClipboardItem => "invalidClipboardItem",
+            Self::InvalidClipboardImage => "invalidClipboardImage",
             Self::InvalidMotionScale => "invalidMotionScale",
             Self::RepositoryInUse => "repositoryInUse",
         }
@@ -51,6 +53,12 @@ impl fmt::Display for AppError {
             }
             Self::InvalidClipboardItem => {
                 write!(formatter, "Clipboard item kind does not match its payload")
+            }
+            Self::InvalidClipboardImage => {
+                write!(
+                    formatter,
+                    "Clipboard image data is invalid or unsafe to decode"
+                )
             }
             Self::InvalidMotionScale => write!(formatter, "Motion scale must be finite"),
             Self::RepositoryInUse => {
