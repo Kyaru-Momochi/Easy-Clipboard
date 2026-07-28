@@ -13,6 +13,10 @@ pub enum AppError {
     InvalidClipboardImage,
     InvalidMotionScale,
     RepositoryInUse,
+    Clipboard,
+    Paste,
+    ClipboardItemUnavailable,
+    CoordinatorUnavailable,
 }
 
 impl AppError {
@@ -27,6 +31,10 @@ impl AppError {
             Self::InvalidClipboardImage => "invalidClipboardImage",
             Self::InvalidMotionScale => "invalidMotionScale",
             Self::RepositoryInUse => "repositoryInUse",
+            Self::Clipboard => "clipboardError",
+            Self::Paste => "pasteError",
+            Self::ClipboardItemUnavailable => "clipboardItemUnavailable",
+            Self::CoordinatorUnavailable => "coordinatorUnavailable",
         }
     }
 }
@@ -63,6 +71,14 @@ impl fmt::Display for AppError {
             Self::InvalidMotionScale => write!(formatter, "Motion scale must be finite"),
             Self::RepositoryInUse => {
                 write!(formatter, "Clipboard repository is already in use")
+            }
+            Self::Clipboard => write!(formatter, "Clipboard operation failed"),
+            Self::Paste => write!(formatter, "Paste operation failed"),
+            Self::ClipboardItemUnavailable => {
+                write!(formatter, "Clipboard item is no longer available")
+            }
+            Self::CoordinatorUnavailable => {
+                write!(formatter, "Clipboard coordinator is unavailable")
             }
         }
     }

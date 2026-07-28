@@ -1,11 +1,18 @@
 mod sqlite;
 
+use std::path::{Path, PathBuf};
+
 use crate::{
     domain::{AppSettings, ClipboardItem, HistoryQuery, ItemId, UpsertDecision},
     error::AppError,
 };
 
 pub use sqlite::SqliteHistoryRepository;
+
+pub trait ImageResourceStore: Send + Sync {
+    fn write_image_resource(&self, file_name: &str, bytes: &[u8]) -> Result<PathBuf, AppError>;
+    fn discard_image_resource(&self, resource_path: &Path) -> Result<(), AppError>;
+}
 
 pub trait HistoryRepository: Send + Sync {
     fn list(&self, query: &HistoryQuery) -> Result<Vec<ClipboardItem>, AppError>;

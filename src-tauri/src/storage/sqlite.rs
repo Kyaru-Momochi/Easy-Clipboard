@@ -22,7 +22,7 @@ use crate::{
     error::AppError,
 };
 
-use super::HistoryRepository;
+use super::{HistoryRepository, ImageResourceStore};
 
 const DATABASE_FILE: &str = "history.sqlite3";
 const LOCK_FILE: &str = ".repository.lock";
@@ -104,6 +104,10 @@ impl SqliteHistoryRepository {
         let destination = self.images_root.join(file_name);
         let temporary = format!("{file_name}.tmp");
 
+        if self.images_dir.is_file(file_name) {
+            return Ok(destination);
+        }
+
         if self
             .images_dir
             .try_exists(&temporary)
@@ -164,6 +168,23 @@ impl SqliteHistoryRepository {
                     .map_err(|_| AppError::Storage)?;
             }
         }
+        Ok(())
+    }
+}
+
+impl ImageResourceStore for SqliteHistoryRepository {
+    fn write_image_resource(&self, file_name: &str, bytes: &[u8]) -> Result<PathBuf, AppError> {
+        Self::write_image_resource(self, file_name, bytes)
+    }
+
+    fn discard_image_resource(&self, resource_path: &Path) -> Result<(), AppError> {
+        let connection = self.lock_connection()?;
+        delete_unreferenced_resources(
+            &connection,
+            &self.images_dir,
+            &self.images_root,
+            vec![resource_path.to_path_buf()],
+        );
         Ok(())
     }
 }
