@@ -6,6 +6,12 @@ use serde::ser::SerializeStruct;
 pub enum AppError {
     InvalidItemLimitMb { value: u64, min: u64, max: u64 },
     FavoriteLimitReached { limit: usize },
+    ItemNotFound,
+    Storage,
+    UnsupportedDatabaseVersion,
+    InvalidClipboardItem,
+    InvalidMotionScale,
+    RepositoryInUse,
 }
 
 impl AppError {
@@ -13,6 +19,12 @@ impl AppError {
         match self {
             Self::InvalidItemLimitMb { .. } => "invalidItemLimit",
             Self::FavoriteLimitReached { .. } => "favoriteLimitReached",
+            Self::ItemNotFound => "itemNotFound",
+            Self::Storage => "storageError",
+            Self::UnsupportedDatabaseVersion => "unsupportedDatabaseVersion",
+            Self::InvalidClipboardItem => "invalidClipboardItem",
+            Self::InvalidMotionScale => "invalidMotionScale",
+            Self::RepositoryInUse => "repositoryInUse",
         }
     }
 }
@@ -31,6 +43,18 @@ impl fmt::Display for AppError {
                     formatter,
                     "Favorite limit of {limit} items has been reached"
                 )
+            }
+            Self::ItemNotFound => write!(formatter, "Clipboard item was not found"),
+            Self::Storage => write!(formatter, "Clipboard storage operation failed"),
+            Self::UnsupportedDatabaseVersion => {
+                write!(formatter, "Clipboard database version is not supported")
+            }
+            Self::InvalidClipboardItem => {
+                write!(formatter, "Clipboard item kind does not match its payload")
+            }
+            Self::InvalidMotionScale => write!(formatter, "Motion scale must be finite"),
+            Self::RepositoryInUse => {
+                write!(formatter, "Clipboard repository is already in use")
             }
         }
     }
