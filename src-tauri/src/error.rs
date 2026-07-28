@@ -5,12 +5,14 @@ use serde::ser::SerializeStruct;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppError {
     InvalidItemLimitMb { value: u64, min: u64, max: u64 },
+    FavoriteLimitReached { limit: usize },
 }
 
 impl AppError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::InvalidItemLimitMb { .. } => "invalidItemLimit",
+            Self::FavoriteLimitReached { .. } => "favoriteLimitReached",
         }
     }
 }
@@ -22,6 +24,12 @@ impl fmt::Display for AppError {
                 write!(
                     formatter,
                     "Item limit must be from {min} to {max} MB; received {value} MB"
+                )
+            }
+            Self::FavoriteLimitReached { limit } => {
+                write!(
+                    formatter,
+                    "Favorite limit of {limit} items has been reached"
                 )
             }
         }
