@@ -39,6 +39,7 @@ struct ClipboardState {
 struct FakeClipboard {
     state: Mutex<ClipboardState>,
     reads: AtomicUsize,
+    read_limits: Mutex<Vec<u64>>,
     fail_read: AtomicBool,
     fail_write: AtomicBool,
     fail_sequence: AtomicBool,
@@ -72,12 +73,17 @@ impl FakeClipboard {
     fn writes(&self) -> Vec<ClipboardPayload> {
         self.state.lock().unwrap().writes.clone()
     }
+
+    fn read_limits(&self) -> Vec<u64> {
+        self.read_limits.lock().unwrap().clone()
+    }
 }
 
 impl ClipboardBackend for FakeClipboard {
-    fn read(&self) -> Result<RawClipboardSnapshot, AppError> {
+    fn read(&self, max_item_bytes: u64) -> Result<RawClipboardSnapshot, AppError> {
         self.events.lock().unwrap().push("read");
         self.reads.fetch_add(1, Ordering::SeqCst);
+        self.read_limits.lock().unwrap().push(max_item_bytes);
         if self.fail_read.load(Ordering::SeqCst) {
             return Err(AppError::Clipboard);
         }
@@ -259,7 +265,7 @@ impl VisibleWriteClipboard {
 }
 
 impl ClipboardBackend for VisibleWriteClipboard {
-    fn read(&self) -> Result<RawClipboardSnapshot, AppError> {
+    fn read(&self, _max_item_bytes: u64) -> Result<RawClipboardSnapshot, AppError> {
         self.record("Read");
         Ok(RawClipboardSnapshot::default())
     }
@@ -290,7 +296,7 @@ struct QueuedClipboard {
 }
 
 impl ClipboardBackend for QueuedClipboard {
-    fn read(&self) -> Result<RawClipboardSnapshot, AppError> {
+    fn read(&self, _max_item_bytes: u64) -> Result<RawClipboardSnapshot, AppError> {
         Ok(self
             .snapshots
             .lock()
@@ -324,7 +330,7 @@ impl InterposedReceiptClipboard {
 }
 
 impl ClipboardBackend for InterposedReceiptClipboard {
-    fn read(&self) -> Result<RawClipboardSnapshot, AppError> {
+    fn read(&self, _max_item_bytes: u64) -> Result<RawClipboardSnapshot, AppError> {
         Ok(self.snapshot.lock().unwrap().clone())
     }
 
@@ -533,6 +539,7 @@ fn shared_max_item_bytes_change_applies_to_the_next_capture() {
         coordinator.capture_now().unwrap(),
         CaptureResult::Stored(_)
     ));
+    assert_eq!(clipboard.read_limits(), vec![3, 4]);
     assert_eq!(all(repository.as_ref()).len(), 1);
 }
 

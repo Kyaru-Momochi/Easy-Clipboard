@@ -17,7 +17,9 @@ use crate::{
 use super::{NormalizeOutcome, RawClipboardSnapshot, normalize};
 
 pub trait ClipboardBackend: Send + Sync {
-    fn read(&self) -> Result<RawClipboardSnapshot, AppError>;
+    /// Reads one selected clipboard category without allocating more than this capture's current
+    /// configured byte limit. Platform adapters may clamp invalid values to their hard safety cap.
+    fn read(&self, max_item_bytes: u64) -> Result<RawClipboardSnapshot, AppError>;
     /// Writes `payload` and returns the authoritative, nonzero clipboard sequence receipt
     /// obtained as part of that same backend operation, before another writer can interpose.
     fn write(&self, payload: &ClipboardPayload) -> Result<u64, AppError>;
@@ -102,12 +104,12 @@ where
             return Ok(CaptureResult::IgnoredSelfWrite);
         }
 
-        let raw = self.clipboard.read()?;
         let settings = self
             .settings
             .read()
             .map_err(|_| AppError::CoordinatorUnavailable)?
             .clone();
+        let raw = self.clipboard.read(settings.max_item_bytes)?;
         match normalize(raw, &settings, self.clock.now_ms())? {
             NormalizeOutcome::IgnoredEmpty => Ok(CaptureResult::IgnoredEmpty),
             NormalizeOutcome::IgnoredOversize {

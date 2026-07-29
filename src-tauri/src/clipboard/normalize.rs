@@ -29,13 +29,19 @@ const TEXT_FINGERPRINT_TAG: &[u8] = b"easy-clipboard:text:v1";
 #[derive(Clone, Debug, Default)]
 pub struct RawClipboardSnapshot {
     pub files: Vec<FileEntry>,
+    /// A selected file-list format whose roots exceeded a platform-side shared traversal budget.
+    pub files_oversize_bytes: Option<u64>,
     pub png: Option<Vec<u8>>,
     /// BMP-decodable bytes. This layer does not parse raw CF_DIB; the Windows adapter adds its
     /// BITMAPFILEHEADER before normalization.
     pub dib: Option<Vec<u8>>,
+    /// A selected image format whose allocation was rejected by the platform adapter.
+    pub image_oversize_bytes: Option<u64>,
     pub plain_text: Option<String>,
     pub html: Option<String>,
     pub rtf: Option<Vec<u8>>,
+    /// A selected text representation whose allocation was rejected by the platform adapter.
+    pub text_oversize_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,8 +71,16 @@ pub fn normalize(
     settings: &AppSettings,
     now_ms: i64,
 ) -> Result<NormalizeOutcome, AppError> {
+    if let Some(measured_bytes) = raw.files_oversize_bytes {
+        return Ok(oversize(measured_bytes, settings.max_item_bytes));
+    }
+
     if !raw.files.is_empty() {
         return Ok(normalize_files(raw.files, settings.max_item_bytes, now_ms));
+    }
+
+    if let Some(measured_bytes) = raw.image_oversize_bytes {
+        return Ok(oversize(measured_bytes, settings.max_item_bytes));
     }
 
     if let Some(png) = raw.png {
@@ -75,6 +89,10 @@ pub fn normalize(
 
     if let Some(dib) = raw.dib {
         return normalize_image(dib, ImageFormat::Bmp, settings.max_item_bytes, now_ms);
+    }
+
+    if let Some(measured_bytes) = raw.text_oversize_bytes {
+        return Ok(oversize(measured_bytes, settings.max_item_bytes));
     }
 
     Ok(normalize_text(
@@ -521,7 +539,7 @@ fn finish_fingerprint(hasher: Sha256) -> String {
 /// this can retain duplicate history entries for two names of the same file, but avoids falsely
 /// merging verbatim names whose repeated separators, dot components, or trailing characters are
 /// semantically significant.
-fn normalized_windows_path(path: &str) -> String {
+pub(crate) fn normalized_windows_path(path: &str) -> String {
     let separated = path.replace('/', "\\").to_lowercase();
     if separated.starts_with("\\\\?\\") {
         return separated;
@@ -837,11 +855,14 @@ mod tests {
         let entries = vec![file(r"C:\notes.txt", "notes.txt", 42)];
         let raw = RawClipboardSnapshot {
             files: entries.clone(),
+            files_oversize_bytes: None,
             png: Some(vec![0xff]),
             dib: Some(vec![0xfe]),
+            image_oversize_bytes: None,
             plain_text: Some("ignored".into()),
             html: Some("<b>ignored</b>".into()),
             rtf: Some(b"{\\rtf1 ignored}".to_vec()),
+            text_oversize_bytes: None,
         };
 
         let normalized = accepted(normalize(raw, &AppSettings::default(), 100).unwrap());
@@ -996,6 +1017,116 @@ mod tests {
             NormalizeOutcome::IgnoredOversize {
                 measured_bytes: TINY_PNG.len() as u64,
                 limit_bytes: TINY_PNG.len() as u64 - 1
+            }
+        );
+    }
+
+    #[test]
+    fn adapter_image_oversize_hint_wins_over_lower_priority_text_without_allocation() {
+        let settings = AppSettings::default().with_limit_mb(1).unwrap();
+        let raw = RawClipboardSnapshot {
+            image_oversize_bytes: Some(500 * 1024 * 1024 + 1),
+            plain_text: Some("lower priority".into()),
+            ..RawClipboardSnapshot::default()
+        };
+
+        assert_eq!(
+            normalize(raw, &settings, 0).unwrap(),
+            NormalizeOutcome::IgnoredOversize {
+                measured_bytes: 500 * 1024 * 1024 + 1,
+                limit_bytes: 1024 * 1024,
+            }
+        );
+    }
+
+    #[test]
+    fn adapter_file_oversize_hint_wins_over_all_lower_priority_formats() {
+        let settings = AppSettings::default().with_limit_mb(1).unwrap();
+        let raw = RawClipboardSnapshot {
+            files_oversize_bytes: Some(2 * 1024 * 1024),
+            png: Some(TINY_PNG.to_vec()),
+            plain_text: Some("lower priority".into()),
+            ..RawClipboardSnapshot::default()
+        };
+
+        assert_eq!(
+            normalize(raw, &settings, 0).unwrap(),
+            NormalizeOutcome::IgnoredOversize {
+                measured_bytes: 2 * 1024 * 1024,
+                limit_bytes: 1024 * 1024,
+            }
+        );
+    }
+
+    #[test]
+    fn higher_priority_payload_wins_over_lower_priority_oversize_hint() {
+        let settings = AppSettings::default().with_limit_mb(1).unwrap();
+        let file = FileEntry {
+            path: r"C:\small.txt".into(),
+            name: "small.txt".into(),
+            extension: "txt".into(),
+            size_bytes: 1,
+            media_kind: MediaKind::Other,
+            available: true,
+        };
+
+        let files = normalize(
+            RawClipboardSnapshot {
+                files: vec![file],
+                image_oversize_bytes: Some(500 * 1024 * 1024 + 1),
+                text_oversize_bytes: Some(500 * 1024 * 1024 + 1),
+                ..RawClipboardSnapshot::default()
+            },
+            &settings,
+            0,
+        )
+        .unwrap();
+        assert!(matches!(
+            files,
+            NormalizeOutcome::Accepted(NormalizedClipboard {
+                item: crate::domain::ClipboardItem {
+                    kind: ClipboardKind::Files,
+                    ..
+                },
+                ..
+            })
+        ));
+
+        let image = normalize(
+            RawClipboardSnapshot {
+                png: Some(TINY_PNG.to_vec()),
+                text_oversize_bytes: Some(500 * 1024 * 1024 + 1),
+                ..RawClipboardSnapshot::default()
+            },
+            &settings,
+            0,
+        )
+        .unwrap();
+        assert!(matches!(
+            image,
+            NormalizeOutcome::Accepted(NormalizedClipboard {
+                item: crate::domain::ClipboardItem {
+                    kind: ClipboardKind::Image,
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn adapter_text_oversize_hint_is_ignored_by_size_policy_without_text_bytes() {
+        let settings = AppSettings::default().with_limit_mb(1).unwrap();
+        let raw = RawClipboardSnapshot {
+            text_oversize_bytes: Some(2 * 1024 * 1024),
+            ..RawClipboardSnapshot::default()
+        };
+
+        assert_eq!(
+            normalize(raw, &settings, 0).unwrap(),
+            NormalizeOutcome::IgnoredOversize {
+                measured_bytes: 2 * 1024 * 1024,
+                limit_bytes: 1024 * 1024,
             }
         );
     }
