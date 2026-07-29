@@ -17,6 +17,7 @@ pub enum AppError {
     Paste,
     ClipboardItemUnavailable,
     CoordinatorUnavailable,
+    Platform,
 }
 
 impl AppError {
@@ -35,6 +36,7 @@ impl AppError {
             Self::Paste => "pasteError",
             Self::ClipboardItemUnavailable => "clipboardItemUnavailable",
             Self::CoordinatorUnavailable => "coordinatorUnavailable",
+            Self::Platform => "platformError",
         }
     }
 }
@@ -80,6 +82,7 @@ impl fmt::Display for AppError {
             Self::CoordinatorUnavailable => {
                 write!(formatter, "Clipboard coordinator is unavailable")
             }
+            Self::Platform => write!(formatter, "Windows platform operation failed"),
         }
     }
 }
@@ -144,5 +147,18 @@ mod tests {
         fn assert_std_error<T: std::error::Error>() {}
 
         assert_std_error::<AppError>();
+    }
+
+    #[test]
+    fn platform_failure_has_a_stable_sanitized_boundary_shape() {
+        let json = serde_json::to_value(AppError::Platform).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "code": "platformError",
+                "message": "Windows platform operation failed"
+            })
+        );
     }
 }
