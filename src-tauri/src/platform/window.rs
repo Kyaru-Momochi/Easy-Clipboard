@@ -6,14 +6,23 @@ use windows::Win32::{
     UI::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
-            GWL_EXSTYLE, GetWindowLongPtrW, GetWindowThreadProcessId, HWND_TOPMOST, IsWindow,
-            MA_NOACTIVATE, SMTO_ABORTIFHUNG, SW_HIDE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW,
-            SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_MOUSEACTIVATE, WM_NCDESTROY,
-            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+            GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
+            HWND_TOPMOST, IsWindow, MA_NOACTIVATE, SMTO_ABORTIFHUNG, SW_HIDE, SW_SHOWNOACTIVATE,
+            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            SendMessageTimeoutW, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP,
+            WM_MOUSEACTIVATE, WM_NCDESTROY, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
         },
     },
 };
+
+pub fn foreground_window() -> Result<isize, AppError> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        Err(AppError::Platform)
+    } else {
+        Ok(hwnd.0 as isize)
+    }
+}
 
 use crate::error::AppError;
 

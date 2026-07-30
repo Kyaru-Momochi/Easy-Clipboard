@@ -5,6 +5,7 @@ use easy_clipboard_lib::{
         AppSettings, ClipboardItem, ClipboardKind, ClipboardPayload, FileEntry, HistoryQuery,
         ItemId, MediaKind, ThemeMode, UpsertDecision,
     },
+    error::AppError,
     storage::{HistoryRepository, SqliteHistoryRepository},
 };
 use tempfile::TempDir;
@@ -481,6 +482,47 @@ fn settings_default_and_round_trip() {
         .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
         .unwrap();
     assert_eq!(row_count, 1);
+}
+
+#[test]
+fn corrupt_settings_json_is_repaired_to_defaults_without_losing_history() {
+    let temp = TempDir::new().unwrap();
+    let repository = repository(&temp);
+    let saved = insert(
+        &repository,
+        text_item("kept", "kept-fingerprint", "kept history", false, 7),
+    );
+    let connection = rusqlite::Connection::open(temp.path().join("history.sqlite3")).unwrap();
+    connection
+        .execute(
+            "INSERT INTO settings(id, json) VALUES (1, '{broken')
+             ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+            [],
+        )
+        .unwrap();
+
+    assert_eq!(repository.load_settings().unwrap(), AppSettings::default());
+    assert_eq!(all(&repository), vec![saved]);
+
+    let repaired: String = connection
+        .query_row("SELECT json FROM settings WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<AppSettings>(&repaired).unwrap(),
+        AppSettings::default()
+    );
+}
+
+#[test]
+fn settings_database_errors_are_not_treated_as_missing_or_corrupt_json() {
+    let temp = TempDir::new().unwrap();
+    let repository = repository(&temp);
+    let connection = rusqlite::Connection::open(temp.path().join("history.sqlite3")).unwrap();
+    connection.execute("DROP TABLE settings", []).unwrap();
+
+    assert_eq!(repository.load_settings().unwrap_err(), AppError::Storage);
 }
 
 #[cfg(any(windows, unix))]

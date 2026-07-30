@@ -18,6 +18,8 @@ pub enum AppError {
     ClipboardItemUnavailable,
     CoordinatorUnavailable,
     Platform,
+    InvalidPath,
+    SettingsConsistency,
 }
 
 impl AppError {
@@ -37,6 +39,8 @@ impl AppError {
             Self::ClipboardItemUnavailable => "clipboardItemUnavailable",
             Self::CoordinatorUnavailable => "coordinatorUnavailable",
             Self::Platform => "platformError",
+            Self::InvalidPath => "invalidPath",
+            Self::SettingsConsistency => "settingsConsistencyError",
         }
     }
 }
@@ -83,6 +87,13 @@ impl fmt::Display for AppError {
                 write!(formatter, "Clipboard coordinator is unavailable")
             }
             Self::Platform => write!(formatter, "Windows platform operation failed"),
+            Self::InvalidPath => write!(formatter, "File path is invalid or unavailable"),
+            Self::SettingsConsistency => {
+                write!(
+                    formatter,
+                    "Settings update could not be rolled back consistently"
+                )
+            }
         }
     }
 }

@@ -8,6 +8,8 @@ pub mod overlay;
 #[cfg(windows)]
 pub mod paste;
 #[cfg(windows)]
+pub mod tray;
+#[cfg(windows)]
 pub mod window;
 
 #[cfg(windows)]
@@ -20,4 +22,6 @@ pub use overlay::{
 #[cfg(windows)]
 pub use paste::WindowsPasteTarget;
 #[cfg(windows)]
-pub use window::{OverlayController, OverlayPlacement, Rect, Size};
+pub use tray::{ListeningState, TRAY_MENU_LABELS};
+#[cfg(windows)]
+pub use window::{OverlayController, OverlayPlacement, Rect, Size, foreground_window};

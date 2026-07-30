@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the clipboard window",
-  "windows": ["clipboard"],
-  "permissions": []
+  "description": "Minimal capability for clipboard and settings webviews",
+  "windows": ["clipboard", "settings"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-hide"
+  ]
 }

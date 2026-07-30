@@ -353,7 +353,18 @@ impl HistoryRepository for SqliteHistoryRepository {
             .optional()
             .map_err(|_| AppError::Storage)?;
         match json {
-            Some(json) => serde_json::from_str(&json).map_err(|_| AppError::Storage),
+            Some(json) => match serde_json::from_str(&json) {
+                Ok(settings) => Ok(settings),
+                Err(_) => {
+                    let settings = AppSettings::default();
+                    let repaired =
+                        serde_json::to_string(&settings).map_err(|_| AppError::Storage)?;
+                    connection
+                        .execute("UPDATE settings SET json = ?1 WHERE id = 1", [&repaired])
+                        .map_err(|_| AppError::Storage)?;
+                    Ok(settings)
+                }
+            },
             None => Ok(AppSettings::default()),
         }
     }

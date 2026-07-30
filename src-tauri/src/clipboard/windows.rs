@@ -1464,26 +1464,26 @@ impl ClipboardListener {
         ))
     }
 
-    pub fn stop(mut self) {
-        self.shutdown();
+    pub fn stop(mut self) -> Result<(), AppError> {
+        self.shutdown()
     }
 
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Result<(), AppError> {
         let Some(thread) = self.window_thread.take() else {
-            return;
+            return Ok(());
         };
         let hwnd = HWND(self.hwnd as *mut c_void);
         // SAFETY: hwnd belongs to the controlled listener thread. SendMessageW synchronously
         // executes WM_CLOSE on that thread, whose WndProc removes the clipboard listener and
         // destroys the window before returning.
         unsafe { SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0))) };
-        let _ = thread.join();
+        thread.join().map_err(|_| AppError::Clipboard)
     }
 }
 
 impl Drop for ClipboardListener {
     fn drop(&mut self) {
-        self.shutdown();
+        let _ = self.shutdown();
     }
 }
 
@@ -1677,7 +1677,7 @@ mod tests {
     fn explicit_listener_stop_joins_message_thread_and_disconnects_updates() {
         let (listener, updates) = ClipboardListener::start().unwrap();
 
-        listener.stop();
+        listener.stop().unwrap();
 
         assert!(matches!(
             updates.recv_timeout(std::time::Duration::from_secs(1)),
