@@ -127,17 +127,17 @@
     display: grid;
     width: min(14rem, calc(100vw - 1rem));
     padding: 0.35rem;
-    border: 1px solid var(--ui-border, #d7dce5);
-    border-radius: 0.7rem;
-    background: var(--ui-card, #fff);
-    box-shadow: 0 0.75rem 2rem rgb(25 32 50 / 18%);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--radius-md);
+    background: var(--ui-card);
+    box-shadow: var(--shadow-card);
   }
 
   button {
     min-height: 2.35rem;
     padding: 0 0.7rem;
     border: 0;
-    border-radius: 0.45rem;
+    border-radius: var(--radius-sm);
     color: inherit;
     text-align: left;
     background: transparent;
@@ -148,7 +148,7 @@
   button:hover:not(:disabled),
   button:focus-visible {
     outline: 0;
-    background: var(--ui-control, #eef1f6);
+    background: var(--ui-control);
   }
 
   button:disabled {

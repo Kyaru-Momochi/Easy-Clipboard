@@ -145,6 +145,7 @@ describe('typed command API', () => {
     await clipboardApi.clearHistory();
     await clipboardApi.getSettings();
     await clipboardApi.saveSettings(validSettings);
+    await clipboardApi.getAppInfo();
     await clipboardApi.openSettings();
     await clipboardApi.revealFile('C:\\file.txt');
     await clipboardApi.hideOverlay();
@@ -159,6 +160,7 @@ describe('typed command API', () => {
       ['clear_history'],
       ['get_settings'],
       ['save_settings', { settings: validSettings }],
+      ['get_app_info'],
       ['open_settings'],
       ['reveal_file', { path: 'C:\\file.txt' }],
       ['hide_overlay'],
@@ -762,6 +764,36 @@ describe('settings state', () => {
     expect(
       validateSettings({ ...validSettings, motionScale: Number.POSITIVE_INFINITY })
     ).toHaveProperty('motionScale');
+    expect(
+      validateSettings({ ...validSettings, motionScale: 2.01 })
+    ).toHaveProperty('motionScale');
+    expect(validateSettings({ ...validSettings, hotkey: '   ' })).toHaveProperty(
+      'hotkey'
+    );
+    expect(
+      validateSettings({
+        ...validSettings,
+        theme: 'unknown' as AppSettings['theme']
+      })
+    ).toHaveProperty('theme');
+  });
+
+  it('accepts valid remote settings and rejects malformed event payloads', async () => {
+    const api = {
+      getSettings: vi.fn(async () => validSettings),
+      saveSettings: vi.fn(async (_settings: AppSettings) => undefined)
+    };
+    const store = createSettingsStore(api);
+    await store.load();
+    const remote = { ...validSettings, theme: 'dark' as const, motionScale: 0.7 };
+
+    expect(store.receive(remote)).toBe(true);
+    expect(get(store).value).toEqual(remote);
+    expect(store.receive({ ...remote, hotkey: '' })).toBe(false);
+    expect(() => store.receive({})).not.toThrow();
+    expect(store.receive({})).toBe(false);
+    expect(store.receive(null)).toBe(false);
+    expect(get(store).value).toEqual(remote);
   });
 
   it('loads and saves settings while exposing validation errors', async () => {

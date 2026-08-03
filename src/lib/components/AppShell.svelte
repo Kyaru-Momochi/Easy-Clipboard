@@ -325,13 +325,6 @@
 
 <style>
   .app-shell {
-    --ui-accent: #5068d8;
-    --ui-border: #d9dee7;
-    --ui-card: #fff;
-    --ui-control: #f1f3f7;
-    --ui-muted: #687181;
-    --ui-danger: #a23838;
-
     display: grid;
     grid-template-rows: auto auto auto minmax(0, 1fr) auto;
     gap: 0.75rem;
@@ -341,9 +334,13 @@
     margin: 0 auto;
     padding: 1rem;
     overflow: hidden;
-    color: #202532;
-    background: #fafbfc;
-    font-family: Inter, 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif;
+    color: var(--ui-text);
+    background: var(--ui-surface);
+    box-shadow: var(--shadow-window);
+    font-family: var(--font-ui);
+    transition:
+      color var(--duration-standard) var(--ease-standard),
+      background-color var(--duration-standard) var(--ease-standard);
   }
 
   header,
@@ -391,7 +388,7 @@
     min-height: 2rem;
     padding: 0 0.7rem;
     border: 1px solid var(--ui-border);
-    border-radius: 0.55rem;
+    border-radius: var(--radius-sm);
     color: inherit;
     background: var(--ui-card);
     font: inherit;
@@ -417,7 +414,14 @@
     cursor: default;
   }
 
-  @media (max-width: 390px), (max-height: 520px) {
+  @supports (backdrop-filter: blur(18px)) {
+    .app-shell {
+      background: var(--ui-surface-glass);
+      backdrop-filter: blur(18px) saturate(1.12);
+    }
+  }
+
+  @media (max-width: 399px), (max-height: 520px) {
     .app-shell {
       gap: 0.55rem;
       padding: 0.7rem;

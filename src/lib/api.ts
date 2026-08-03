@@ -1,6 +1,12 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
-import type { AppSettings, ClipboardItem, HistoryQuery, ItemId } from './types';
+import type {
+  AppInfo,
+  AppSettings,
+  ClipboardItem,
+  HistoryQuery,
+  ItemId
+} from './types';
 
 export function assetUrl(path: string): string {
   if (path.trim() === '') {
@@ -75,6 +81,10 @@ export async function getSettings(): Promise<AppSettings> {
 export async function saveSettings(settings: AppSettings): Promise<void> {
   validateSettingsNumbers(settings);
   await invoke<void>('save_settings', { settings });
+}
+
+export function getAppInfo(): Promise<AppInfo> {
+  return invoke<AppInfo>('get_app_info');
 }
 
 export function openSettings(): Promise<void> {

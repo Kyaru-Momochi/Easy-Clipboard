@@ -32,18 +32,18 @@
     gap: 0.55rem;
     min-height: 2.6rem;
     padding: 0 0.8rem;
-    border: 1px solid var(--ui-border, #d7dce5);
-    border-radius: 0.75rem;
-    background: var(--ui-control, #f7f8fa);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--radius-md);
+    background: var(--ui-control);
   }
 
   .search-field:focus-within {
-    border-color: var(--ui-accent, #5068d8);
-    outline: 2px solid color-mix(in srgb, var(--ui-accent, #5068d8) 25%, transparent);
+    border-color: var(--ui-accent);
+    outline: 2px solid color-mix(in srgb, var(--ui-accent) 25%, transparent);
   }
 
   .search-icon {
-    color: var(--ui-muted, #697181);
+    color: var(--ui-muted);
     font-size: 1.15rem;
   }
 

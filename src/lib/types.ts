@@ -69,6 +69,11 @@ export interface AppSettings {
   clearOnExit: boolean;
 }
 
+export interface AppInfo {
+  version: string;
+  appDataDir: string;
+}
+
 export interface AppError {
   code: string;
   message: string;

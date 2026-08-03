@@ -38,26 +38,26 @@
   button {
     min-height: 2.1rem;
     border: 1px solid transparent;
-    border-radius: 0.65rem;
-    color: var(--ui-muted, #697181);
+    border-radius: var(--radius-sm);
+    color: var(--ui-muted);
     background: transparent;
     font: inherit;
     cursor: pointer;
   }
 
   button:hover {
-    background: var(--ui-control, #f0f2f6);
+    background: var(--ui-control);
   }
 
   button[aria-pressed='true'] {
-    border-color: var(--ui-border, #d7dce5);
-    color: var(--ui-accent, #4057bd);
-    background: var(--ui-control, #eef1fb);
+    border-color: var(--ui-border);
+    color: var(--ui-accent);
+    background: var(--ui-accent-soft);
     font-weight: 650;
   }
 
   button:focus-visible {
-    outline: 2px solid var(--ui-accent, #5068d8);
+    outline: 2px solid var(--ui-accent);
     outline-offset: 1px;
   }
 </style>

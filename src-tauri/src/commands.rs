@@ -5,7 +5,7 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
 const FILE_AVAILABILITY_PROBE_LIMIT: usize = 512;
@@ -221,8 +221,19 @@ pub fn delete_item(state: State<'_, AppState>, id: ItemId) -> Result<(), AppErro
 }
 
 #[tauri::command]
-pub fn clear_history(state: State<'_, AppState>) -> Result<(), AppError> {
-    CommandService::new(state.inner()).clear_history()
+pub fn clear_history(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    clear_history_and_notify(&CommandService::new(state.inner()), || {
+        let _ = app.emit(crate::platform::HISTORY_CHANGED_EVENT, ());
+    })
+}
+
+fn clear_history_and_notify(
+    service: &CommandService<'_>,
+    notify: impl FnOnce(),
+) -> Result<(), AppError> {
+    service.clear_history()?;
+    notify();
+    Ok(())
 }
 
 #[tauri::command]
@@ -231,8 +242,51 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, AppError>
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: AppSettings) -> Result<(), AppError> {
-    CommandService::new(state.inner()).save_settings(settings)
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> Result<(), AppError> {
+    save_settings_and_notify(&CommandService::new(state.inner()), settings, |saved| {
+        let _ = app.emit("settings-changed", saved);
+    })
+}
+
+fn save_settings_and_notify(
+    service: &CommandService<'_>,
+    settings: AppSettings,
+    notify: impl FnOnce(&AppSettings),
+) -> Result<(), AppError> {
+    service.save_settings(settings.clone())?;
+    notify(&settings);
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    version: String,
+    app_data_dir: String,
+}
+
+fn app_info_from_parts(version: &str, app_data_dir: &Path) -> Result<AppInfo, AppError> {
+    if version.trim().is_empty() || !app_data_dir.is_absolute() {
+        return Err(AppError::InvalidPath);
+    }
+    let app_data_dir = app_data_dir.to_string_lossy().into_owned();
+    if app_data_dir.trim().is_empty() || app_data_dir.contains('\0') {
+        return Err(AppError::InvalidPath);
+    }
+    Ok(AppInfo {
+        version: version.into(),
+        app_data_dir,
+    })
+}
+
+#[tauri::command]
+pub fn get_app_info(app: AppHandle) -> Result<AppInfo, AppError> {
+    let app_data_dir = app.path().app_data_dir().map_err(|_| AppError::Platform)?;
+    app_info_from_parts(&app.package_info().version.to_string(), &app_data_dir)
 }
 
 #[tauri::command]
@@ -354,8 +408,9 @@ mod tests {
     use std::thread;
 
     use super::{
-        CommandService, FILE_AVAILABILITY_PROBE_LIMIT, RevealAction, list_history_async,
-        refresh_file_availability_with_probe, reveal_action,
+        CommandService, FILE_AVAILABILITY_PROBE_LIMIT, RevealAction, app_info_from_parts,
+        clear_history_and_notify, list_history_async, refresh_file_availability_with_probe,
+        reveal_action, save_settings_and_notify,
     };
     #[cfg(windows)]
     use super::{existing_directory_target, prepare_for_exit};
@@ -431,6 +486,7 @@ mod tests {
     struct FakeHistory {
         items: Mutex<Vec<ClipboardItem>>,
         settings: Mutex<AppSettings>,
+        clear_results: Mutex<VecDeque<Result<(), AppError>>>,
         save_results: Mutex<VecDeque<Result<(), AppError>>>,
         save_attempts: Mutex<Vec<AppSettings>>,
         list_threads: Mutex<Vec<std::thread::ThreadId>>,
@@ -479,6 +535,9 @@ mod tests {
         }
 
         fn clear_normal(&self) -> Result<(), AppError> {
+            if let Some(result) = self.clear_results.lock().unwrap().pop_front() {
+                result?;
+            }
             self.items.lock().unwrap().retain(|item| item.is_favorite);
             Ok(())
         }
@@ -597,6 +656,7 @@ mod tests {
                 item("image", ClipboardKind::Image, "needle image", true),
             ]),
             settings: Mutex::new(AppSettings::default()),
+            clear_results: Mutex::new(VecDeque::new()),
             save_results: Mutex::new(VecDeque::new()),
             save_attempts: Mutex::new(Vec::new()),
             list_threads: Mutex::new(Vec::new()),
@@ -832,6 +892,43 @@ mod tests {
     }
 
     #[test]
+    fn successful_history_clear_notifies_after_mutation() {
+        let fixture = fixture();
+        let notifications = AtomicUsize::new(0);
+
+        clear_history_and_notify(&CommandService::new(&fixture.state), || {
+            notifications.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+        let items = fixture.history.items.lock().unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].is_favorite);
+    }
+
+    #[test]
+    fn failed_history_clear_never_notifies() {
+        let fixture = fixture();
+        fixture
+            .history
+            .clear_results
+            .lock()
+            .unwrap()
+            .push_back(Err(AppError::Storage));
+        let notifications = AtomicUsize::new(0);
+
+        let error = clear_history_and_notify(&CommandService::new(&fixture.state), || {
+            notifications.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap_err();
+
+        assert_eq!(error, AppError::Storage);
+        assert_eq!(notifications.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.history.items.lock().unwrap().len(), 2);
+    }
+
+    #[test]
     fn commands_enforce_favorite_limit_before_mutating_history() {
         let fixture = fixture();
         fixture.history.settings.lock().unwrap().favorite_limit = 1;
@@ -903,6 +1000,76 @@ mod tests {
             *fixture.hotkey.replacements.lock().unwrap(),
             [("Ctrl+Shift+V".into(), "Ctrl+Alt+X".into())]
         );
+    }
+
+    #[test]
+    fn successful_settings_save_notifies_with_the_persisted_payload() {
+        let fixture = fixture();
+        let requested = AppSettings {
+            theme: crate::domain::ThemeMode::Dark,
+            motion_scale: 0.65,
+            ..AppSettings::default()
+        };
+        let notifications = Mutex::new(Vec::new());
+
+        save_settings_and_notify(
+            &CommandService::new(&fixture.state),
+            requested.clone(),
+            |saved| notifications.lock().unwrap().push(saved.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            notifications.lock().unwrap().as_slice(),
+            std::slice::from_ref(&requested)
+        );
+        assert_eq!(fixture.history.load_settings().unwrap(), requested);
+    }
+
+    #[test]
+    fn failed_settings_save_never_notifies_other_windows() {
+        let fixture = fixture();
+        *fixture.hotkey.rejected.lock().unwrap() = Some("Ctrl+Alt+X".into());
+        let requested = AppSettings {
+            hotkey: "Ctrl+Alt+X".into(),
+            ..AppSettings::default()
+        };
+        let notifications = AtomicUsize::new(0);
+
+        let error =
+            save_settings_and_notify(&CommandService::new(&fixture.state), requested, |_| {
+                notifications.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap_err();
+
+        assert_eq!(error, AppError::Platform);
+        assert_eq!(notifications.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn app_info_serializes_a_safe_absolute_data_directory() {
+        let directory = TempDir::new().unwrap();
+
+        let info = app_info_from_parts("0.1.0", directory.path()).unwrap();
+        let json = serde_json::to_value(&info).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "version": "0.1.0",
+                "appDataDir": directory.path().to_string_lossy()
+            })
+        );
+    }
+
+    #[test]
+    fn app_info_rejects_relative_or_empty_data_directories() {
+        for path in [Path::new("relative"), Path::new("")] {
+            assert_eq!(
+                app_info_from_parts("0.1.0", path),
+                Err(AppError::InvalidPath)
+            );
+        }
     }
 
     fn changed_settings() -> AppSettings {

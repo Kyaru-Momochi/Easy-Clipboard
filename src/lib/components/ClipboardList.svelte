@@ -84,7 +84,7 @@
     min-height: 8rem;
     margin: 0;
     place-items: center;
-    color: var(--ui-muted, #697181);
+    color: var(--ui-muted);
     text-align: center;
   }
 
@@ -92,16 +92,22 @@
     min-height: auto;
     margin-bottom: 0.55rem;
     padding: 0.65rem 0.75rem;
-    border-radius: 0.6rem;
-    color: var(--ui-danger, #a23838);
-    background: #fff0f0;
+    border-radius: var(--radius-sm);
+    color: var(--ui-danger);
+    background: var(--ui-danger-soft);
   }
 
   .syncing,
   .count {
     margin: 0.55rem 0 0;
-    color: var(--ui-muted, #697181);
+    color: var(--ui-muted);
     font-size: 0.75rem;
     text-align: right;
+  }
+
+  @media (max-width: 399px) {
+    .count {
+      display: none;
+    }
   }
 </style>

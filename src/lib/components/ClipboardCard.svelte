@@ -148,27 +148,28 @@
     min-height: 4.5rem;
     padding: 0.75rem;
     overflow: hidden;
-    border: 1px solid var(--ui-border, #dfe3ea);
-    border-radius: 0.8rem;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--radius-md);
     color: inherit;
     text-align: left;
-    background: var(--ui-card, #fff);
+    background: var(--ui-card);
     font: inherit;
     cursor: pointer;
   }
 
   button:hover:not(:disabled) {
-    border-color: var(--ui-accent, #5068d8);
-    background: var(--ui-control, #f7f8fc);
+    border-color: var(--ui-accent);
+    background: var(--ui-control);
+    transform: translateY(-1px);
   }
 
   button.selected {
-    border-color: var(--ui-accent, #5068d8);
-    box-shadow: inset 3px 0 var(--ui-accent, #5068d8);
+    border-color: var(--ui-accent);
+    box-shadow: inset 3px 0 var(--ui-accent);
   }
 
   button:focus-visible {
-    outline: 2px solid var(--ui-accent, #5068d8);
+    outline: 2px solid var(--ui-accent);
     outline-offset: 2px;
   }
 
@@ -184,9 +185,9 @@
     min-width: 2.5rem;
     min-height: 1.55rem;
     padding: 0 0.35rem;
-    border-radius: 0.45rem;
-    color: var(--ui-accent, #4057bd);
-    background: var(--ui-control, #eef1fb);
+    border-radius: var(--radius-sm);
+    color: var(--ui-accent);
+    background: var(--ui-accent-soft);
     font-size: 0.75rem;
     font-weight: 650;
   }
@@ -207,7 +208,7 @@
   .meta,
   .path,
   .more-files {
-    color: var(--ui-muted, #697181);
+    color: var(--ui-muted);
     font-size: 0.78rem;
   }
 
@@ -242,8 +243,8 @@
     width: 4.5rem;
     height: 3rem;
     overflow: hidden;
-    border-radius: 0.55rem;
-    background: var(--ui-control, #eef0f4);
+    border-radius: var(--radius-sm);
+    background: var(--ui-control);
   }
 
   img {
@@ -254,12 +255,12 @@
 
   .image-fallback,
   .unavailable {
-    color: var(--ui-danger, #a23838);
+    color: var(--ui-danger);
     font-size: 0.75rem;
   }
 
   .pending {
-    color: var(--ui-muted, #697181);
+    color: var(--ui-muted);
     font-size: 0.75rem;
   }
 
@@ -267,16 +268,22 @@
     position: absolute;
     top: 0.45rem;
     right: 0.55rem;
-    color: #b87912;
+    color: var(--ui-warning);
   }
 
-  @media (max-width: 390px) {
+  @media (max-width: 399px) {
     button {
       padding: 0.65rem;
     }
 
     .thumbnail {
       width: 3.75rem;
+    }
+
+    .meta,
+    .path,
+    .more-files {
+      display: none;
     }
   }
 </style>

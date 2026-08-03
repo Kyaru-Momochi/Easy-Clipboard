@@ -172,6 +172,7 @@ pub fn run() {
             commands::clear_history,
             commands::get_settings,
             commands::save_settings,
+            commands::get_app_info,
             commands::open_settings,
             commands::reveal_file,
             commands::hide_overlay,
@@ -338,6 +339,21 @@ mod tests {
         assert!(
             commands.contains("state.inner().hide_overlay()"),
             "the command must use AppState's full native overlay lifecycle"
+        );
+    }
+
+    #[test]
+    fn app_info_command_is_registered_for_the_settings_view() {
+        let runtime = include_str!("lib.rs");
+        let commands = include_str!("commands.rs");
+
+        assert!(
+            runtime.contains("commands::get_app_info,"),
+            "get_app_info must be registered in the Tauri invoke handler"
+        );
+        assert!(
+            commands.contains("pub fn get_app_info(app: AppHandle)"),
+            "settings must retrieve version and app-data directory from native state"
         );
     }
 }
