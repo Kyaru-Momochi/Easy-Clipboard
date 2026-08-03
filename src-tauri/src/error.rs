@@ -19,6 +19,7 @@ pub enum AppError {
     CoordinatorUnavailable,
     Platform,
     InvalidPath,
+    InvalidDataDirectoryOverride,
     SettingsConsistency,
 }
 
@@ -40,6 +41,7 @@ impl AppError {
             Self::CoordinatorUnavailable => "coordinatorUnavailable",
             Self::Platform => "platformError",
             Self::InvalidPath => "invalidPath",
+            Self::InvalidDataDirectoryOverride => "invalidDataDirectoryOverride",
             Self::SettingsConsistency => "settingsConsistencyError",
         }
     }
@@ -88,6 +90,10 @@ impl fmt::Display for AppError {
             }
             Self::Platform => write!(formatter, "Windows platform operation failed"),
             Self::InvalidPath => write!(formatter, "File path is invalid or unavailable"),
+            Self::InvalidDataDirectoryOverride => write!(
+                formatter,
+                "EASY_CLIPBOARD_DATA_DIR must be a non-empty absolute path"
+            ),
             Self::SettingsConsistency => {
                 write!(
                     formatter,

@@ -6,6 +6,23 @@ pub mod platform;
 pub mod state;
 pub mod storage;
 
+fn resolve_repository_root(
+    default: std::path::PathBuf,
+    override_value: Option<&str>,
+) -> Result<std::path::PathBuf, error::AppError> {
+    let Some(value) = override_value else {
+        return Ok(default);
+    };
+    if value.trim().is_empty() {
+        return Err(error::AppError::InvalidDataDirectoryOverride);
+    }
+    let path = std::path::PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err(error::AppError::InvalidDataDirectoryOverride);
+    }
+    Ok(path)
+}
+
 fn complete_capture<E>(
     result: Result<clipboard::CaptureResult, error::AppError>,
     notify: impl FnOnce() -> Result<(), E>,
@@ -83,7 +100,6 @@ pub fn run() {
                 use state::{AppState, ClipboardMonitor, NativeAutostart, NativeHotkey};
                 use storage::{HistoryRepository, SqliteHistoryRepository};
                 use tauri::Manager;
-                use tauri_plugin_autostart::ManagerExt;
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
                 let window = app.get_webview_window("clipboard").ok_or_else(|| {
@@ -97,7 +113,13 @@ pub fn run() {
                 let history_window = window.clone();
                 let overlay = Arc::new(platform::OverlayRuntime::new(overlay, window));
 
-                let app_data = app.path().app_data_dir()?;
+                let override_value = std::env::var_os("EASY_CLIPBOARD_DATA_DIR")
+                    .map(|value| value.into_string().map_err(|_| error::AppError::InvalidDataDirectoryOverride))
+                    .transpose()?;
+                let app_data = resolve_repository_root(
+                    app.path().app_data_dir()?,
+                    override_value.as_deref(),
+                )?;
                 let repository = Arc::new(SqliteHistoryRepository::open(app_data)?);
                 let settings = repository.load_settings()?;
                 let shared_settings = Arc::new(RwLock::new(settings.clone()));
@@ -142,15 +164,10 @@ pub fn run() {
                 app.global_shortcut()
                     .register(settings.hotkey.as_str())
                     .map_err(|_| error::AppError::Platform)?;
-                if settings.autostart {
-                    app.autolaunch()
-                        .enable()
-                        .map_err(|_| error::AppError::Platform)?;
-                } else {
-                    app.autolaunch()
-                        .disable()
-                        .map_err(|_| error::AppError::Platform)?;
-                }
+                state::reconcile_startup_autostart(
+                    &NativeAutostart::new(app.handle().clone()),
+                    settings.autostart,
+                )?;
                 platform::tray::install(app)?;
             }
             Ok(())
@@ -186,7 +203,7 @@ pub fn run() {
 mod tests {
     use std::cell::Cell;
 
-    use super::complete_capture;
+    use super::{complete_capture, resolve_repository_root};
     use crate::{
         clipboard::CaptureResult,
         domain::{ClipboardItem, ClipboardKind, ClipboardPayload, ItemId},
@@ -354,6 +371,32 @@ mod tests {
         assert!(
             commands.contains("pub fn get_app_info(app: AppHandle)"),
             "settings must retrieve version and app-data directory from native state"
+        );
+    }
+
+    #[test]
+    fn repository_root_uses_tauri_default_without_an_override() {
+        let default = std::path::PathBuf::from(r"C:\\Users\\tester\\AppData\\Roaming\\com.kyaru-momochi.easy-clipboard");
+        assert_eq!(resolve_repository_root(default.clone(), None).unwrap(), default);
+    }
+
+    #[test]
+    fn repository_root_accepts_an_absolute_override() {
+        assert_eq!(
+            resolve_repository_root(
+                std::path::PathBuf::from(r"C:\\default"),
+                Some(r"C:\\smoke\\isolated-app-data"),
+            )
+            .unwrap(),
+            std::path::PathBuf::from(r"C:\\smoke\\isolated-app-data")
+        );
+    }
+
+    #[test]
+    fn repository_root_rejects_a_relative_override() {
+        assert_eq!(
+            resolve_repository_root(std::path::PathBuf::from(r"C:\\default"), Some("relative")),
+            Err(crate::error::AppError::InvalidDataDirectoryOverride)
         );
     }
 }

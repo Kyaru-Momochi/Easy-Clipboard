@@ -1,10 +1,14 @@
 [CmdletBinding()]
 param(
-    [string] $InstallerPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'release\Easy-Clipboard_0.1.0_x64-setup.exe')
+    [string] $InstallerPath
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
+    $InstallerPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'release\Easy-Clipboard_0.1.0_x64-setup.exe'
+}
 
 function Test-ExistingEasyClipboardInstall {
     $installDirectory = Join-Path $env:LOCALAPPDATA 'Easy Clipboard'
@@ -20,7 +24,9 @@ function Test-ExistingEasyClipboardInstall {
     foreach ($root in $uninstallRoots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($entry in Get-ChildItem -LiteralPath $root) {
-            $displayName = (Get-ItemProperty -LiteralPath $entry.PSPath -Name DisplayName -ErrorAction SilentlyContinue).DisplayName
+            $properties = Get-ItemProperty -LiteralPath $entry.PSPath -ErrorAction SilentlyContinue
+            $displayNameProperty = $properties.PSObject.Properties['DisplayName']
+            $displayName = if ($null -eq $displayNameProperty) { $null } else { $displayNameProperty.Value }
             if ($displayName -eq 'Easy Clipboard') { return $true }
         }
     }
@@ -53,10 +59,13 @@ if (Test-ExistingEasyClipboardInstall) {
 $scratchDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("easy-clipboard-installer-smoke-" + [guid]::NewGuid())
 $copiedInstaller = Join-Path $scratchDirectory $installer.Name
 $isolatedLocalAppData = Join-Path $scratchDirectory 'localappdata'
+$isolatedAppData = Join-Path $scratchDirectory 'appdata'
+$isolatedRepository = Join-Path $scratchDirectory 'isolated-app-data'
 $installDirectory = Join-Path $env:LOCALAPPDATA 'Easy Clipboard'
 $applicationPath = Join-Path $installDirectory 'easy-clipboard.exe'
 $uninstallerPath = Join-Path $installDirectory 'uninstall.exe'
 $installedBySmoke = $false
+$application = $null
 
 try {
     New-Item -ItemType Directory -Path $scratchDirectory | Out-Null
@@ -72,30 +81,68 @@ try {
     Wait-ForPath -Path $applicationPath
 
     New-Item -ItemType Directory -Path $isolatedLocalAppData | Out-Null
+    New-Item -ItemType Directory -Path $isolatedAppData | Out-Null
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new($applicationPath)
     $startInfo.UseShellExecute = $false
     $startInfo.EnvironmentVariables['LOCALAPPDATA'] = $isolatedLocalAppData
+    $startInfo.EnvironmentVariables['APPDATA'] = $isolatedAppData
+    $startInfo.EnvironmentVariables['EASY_CLIPBOARD_DATA_DIR'] = $isolatedRepository
     $application = [System.Diagnostics.Process]::Start($startInfo)
     Start-Sleep -Seconds 5
     if ($application.HasExited) {
         throw "Installed application exited early with code $($application.ExitCode)."
     }
+    Wait-ForPath -Path (Join-Path $isolatedRepository 'history.sqlite3')
     $application.Kill()
     $application.WaitForExit()
 }
 finally {
-    if ($installedBySmoke) {
-        if (-not (Test-Path -LiteralPath $uninstallerPath)) {
-            throw "Smoke-installed application has no uninstaller at '$uninstallerPath'; refusing to continue."
-        }
-        $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList '/S' -Wait -PassThru
-        if ($uninstall.ExitCode -ne 0) { throw "Silent uninstaller exited with code $($uninstall.ExitCode)." }
-        if (Test-Path -LiteralPath $applicationPath) {
-            throw "Uninstall did not remove '$applicationPath'."
+    $cleanupErrors = @()
+
+    try {
+        if ($null -ne $application) {
+            try {
+                if (-not $application.HasExited) {
+                    $application.Kill()
+                    $application.WaitForExit()
+                }
+            }
+            finally {
+                $application.Dispose()
+            }
         }
     }
-    if (Test-Path -LiteralPath $scratchDirectory) {
-        Remove-Item -LiteralPath $scratchDirectory -Recurse -Force
+    catch {
+        $cleanupErrors += $_
+    }
+
+    try {
+        if ($installedBySmoke) {
+            if (-not (Test-Path -LiteralPath $uninstallerPath)) {
+                throw "Smoke-installed application has no uninstaller at '$uninstallerPath'; refusing to continue."
+            }
+            $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList '/S' -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) { throw "Silent uninstaller exited with code $($uninstall.ExitCode)." }
+            if (Test-Path -LiteralPath $applicationPath) {
+                throw "Uninstall did not remove '$applicationPath'."
+            }
+        }
+    }
+    catch {
+        $cleanupErrors += $_
+    }
+
+    try {
+        if (Test-Path -LiteralPath $scratchDirectory) {
+            Remove-Item -LiteralPath $scratchDirectory -Recurse -Force
+        }
+    }
+    catch {
+        $cleanupErrors += $_
+    }
+
+    if ($cleanupErrors.Count -gt 0) {
+        throw ('Smoke test cleanup failed: ' + (($cleanupErrors | ForEach-Object { $_.Exception.Message }) -join '; '))
     }
 }
 

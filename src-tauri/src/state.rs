@@ -90,6 +90,21 @@ pub trait AutostartControl: Send + Sync {
     fn set_enabled(&self, enabled: bool) -> Result<(), AppError>;
 }
 
+pub trait StartupAutostartControl {
+    fn is_enabled(&self) -> Result<bool, AppError>;
+    fn set_enabled(&self, enabled: bool) -> Result<(), AppError>;
+}
+
+pub fn reconcile_startup_autostart(
+    backend: &impl StartupAutostartControl,
+    desired: bool,
+) -> Result<(), AppError> {
+    if backend.is_enabled()? != desired {
+        backend.set_enabled(desired)?;
+    }
+    Ok(())
+}
+
 pub struct NativeHotkey {
     app: AppHandle,
 }
@@ -165,6 +180,16 @@ impl AutostartControl for NativeAutostart {
             manager.disable()
         }
         .map_err(|_| AppError::Platform)
+    }
+}
+
+impl StartupAutostartControl for NativeAutostart {
+    fn is_enabled(&self) -> Result<bool, AppError> {
+        self.app.autolaunch().is_enabled().map_err(|_| AppError::Platform)
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<(), AppError> {
+        AutostartControl::set_enabled(self, enabled)
     }
 }
 
@@ -272,13 +297,40 @@ impl AppState {
 mod tests {
     use std::{collections::HashSet, sync::Mutex};
 
-    use super::{ShortcutRegistrationBackend, replace_registered_shortcut};
+    use super::{StartupAutostartControl, ShortcutRegistrationBackend, reconcile_startup_autostart, replace_registered_shortcut};
     use crate::error::AppError;
 
     struct FakeShortcuts {
         registered: Mutex<HashSet<String>>,
         operations: Mutex<Vec<String>>,
         fail_unregister: Mutex<HashSet<String>>,
+    }
+
+    struct FakeStartupAutostart {
+        enabled: bool,
+        operations: Mutex<Vec<bool>>,
+    }
+
+    impl StartupAutostartControl for FakeStartupAutostart {
+        fn is_enabled(&self) -> Result<bool, AppError> { Ok(self.enabled) }
+        fn set_enabled(&self, enabled: bool) -> Result<(), AppError> {
+            self.operations.lock().unwrap().push(enabled);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn startup_autostart_leaves_an_already_disabled_entry_untouched() {
+        let backend = FakeStartupAutostart { enabled: false, operations: Mutex::new(Vec::new()) };
+        reconcile_startup_autostart(&backend, false).unwrap();
+        assert!(backend.operations.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn startup_autostart_disables_an_enabled_entry_when_requested() {
+        let backend = FakeStartupAutostart { enabled: true, operations: Mutex::new(Vec::new()) };
+        reconcile_startup_autostart(&backend, false).unwrap();
+        assert_eq!(*backend.operations.lock().unwrap(), [false]);
     }
 
     impl ShortcutRegistrationBackend for FakeShortcuts {
