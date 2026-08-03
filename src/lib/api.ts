@@ -1,6 +1,17 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
 import type { AppSettings, ClipboardItem, HistoryQuery, ItemId } from './types';
+
+export function assetUrl(path: string): string {
+  if (path.trim() === '') {
+    return '';
+  }
+  try {
+    return convertFileSrc(path);
+  } catch {
+    return '';
+  }
+}
 
 function assertSafeInteger(value: number, field: string, nonNegative = false): void {
   if (!Number.isSafeInteger(value) || (nonNegative && value < 0)) {
@@ -72,6 +83,10 @@ export function openSettings(): Promise<void> {
 
 export function revealFile(path: string): Promise<void> {
   return invoke<void>('reveal_file', { path });
+}
+
+export function hideOverlay(): Promise<void> {
+  return invoke<void>('hide_overlay');
 }
 
 export function exitApp(): Promise<void> {

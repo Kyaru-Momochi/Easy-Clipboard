@@ -764,6 +764,7 @@ mod tests {
             size_bytes,
             media_kind: MediaKind::Other,
             available: true,
+            availability_pending: false,
         }
     }
 
@@ -1068,6 +1069,7 @@ mod tests {
             size_bytes: 1,
             media_kind: MediaKind::Other,
             available: true,
+            availability_pending: false,
         };
 
         let files = normalize(
@@ -1238,7 +1240,7 @@ mod tests {
     }
 
     #[test]
-    fn file_fingerprint_includes_every_entry_field() {
+    fn file_fingerprint_includes_every_business_entry_field() {
         let original = FileEntry {
             path: r"C:\docs\note.txt".into(),
             name: "note.txt".into(),
@@ -1246,6 +1248,7 @@ mod tests {
             size_bytes: 42,
             media_kind: MediaKind::Other,
             available: true,
+            availability_pending: false,
         };
         let original_fingerprint = accepted(
             normalize(
@@ -1319,6 +1322,18 @@ mod tests {
     }
 
     #[test]
+    fn availability_pending_does_not_change_file_fingerprint() {
+        let original = file(r"C:\docs\note.txt", "note.txt", 42);
+        let mut pending = original.clone();
+        pending.availability_pending = true;
+
+        assert_eq!(
+            fingerprint_for_file(original),
+            fingerprint_for_file(pending)
+        );
+    }
+
+    #[test]
     fn lexical_windows_path_normalization_handles_unicode_case_and_slashes() {
         let slash = RawClipboardSnapshot {
             files: vec![file("C:/Ärger/文档/Note.txt", "Note.txt", 1)],
@@ -1344,6 +1359,7 @@ mod tests {
             size_bytes: 1,
             media_kind: MediaKind::Other,
             available: true,
+            availability_pending: false,
         };
         let lower = FileEntry {
             path: "c:/docs/note.txt".into(),
@@ -1446,6 +1462,7 @@ mod tests {
             size_bytes: 1,
             media_kind: MediaKind::Other,
             available: true,
+            availability_pending: false,
         };
         let base_fingerprint = fingerprint_for_file(base.clone());
         let variants = [

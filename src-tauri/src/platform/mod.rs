@@ -16,8 +16,9 @@ pub mod window;
 pub use keyboard::{KeyAction, VisibleKeyboardRouter};
 #[cfg(windows)]
 pub use overlay::{
-    OVERLAY_HIDE_EVENT, OverlayRuntime, SEARCH_INPUT_EVENT, SELECTION_MOVE_EVENT,
-    SELECTION_PASTE_EVENT, SearchInputPayload, SelectionMovePayload,
+    HISTORY_CHANGED_EVENT, OVERLAY_HIDE_EVENT, OverlayRuntime, SEARCH_INPUT_EVENT,
+    SELECTION_MOVE_EVENT, SELECTION_PASTE_EVENT, SearchInputPayload, SelectionMovePayload,
+    emit_history_changed,
 };
 #[cfg(windows)]
 pub use paste::WindowsPasteTarget;

@@ -355,24 +355,53 @@ impl WindowsClipboard {
                 ])
             }
             ClipboardPayload::Files { entries } => {
-                if entries.is_empty()
-                    || entries
-                        .iter()
-                        .any(|entry| !entry.available || !Path::new(&entry.path).exists())
-                {
-                    return Err(AppError::ClipboardItemUnavailable);
+                // `paste_item` rejects unavailable files before reaching the adapter. This
+                // text fallback is therefore copy-only and preserves every stored path.
+                match file_write_plan(entries)? {
+                    FileWritePlan::FileDrop(paths) => Ok(vec![PreparedFormat::new(
+                        CF_HDROP,
+                        &encode_drop_files(&paths)?,
+                    )?]),
+                    FileWritePlan::UnicodeText(paths) => Ok(vec![PreparedFormat::new(
+                        CF_UNICODETEXT,
+                        &encode_utf16_text(&paths)?,
+                    )?]),
                 }
-                let paths = entries
-                    .iter()
-                    .map(|entry| PathBuf::from(&entry.path))
-                    .collect::<Vec<_>>();
-                Ok(vec![PreparedFormat::new(
-                    CF_HDROP,
-                    &encode_drop_files(&paths)?,
-                )?])
             }
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FileWritePlan {
+    FileDrop(Vec<PathBuf>),
+    UnicodeText(String),
+}
+
+fn file_write_plan(entries: &[FileEntry]) -> Result<FileWritePlan, AppError> {
+    if entries.is_empty() {
+        return Err(AppError::ClipboardItemUnavailable);
+    }
+
+    if entries
+        .iter()
+        .all(|entry| entry.available && Path::new(&entry.path).exists())
+    {
+        return Ok(FileWritePlan::FileDrop(
+            entries
+                .iter()
+                .map(|entry| PathBuf::from(&entry.path))
+                .collect(),
+        ));
+    }
+
+    Ok(FileWritePlan::UnicodeText(
+        entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>()
+            .join("\r\n"),
+    ))
 }
 
 struct ClipboardGuard;
@@ -1216,6 +1245,7 @@ fn make_file_entry(path: PathBuf, size_bytes: u64, available: bool) -> FileEntry
         size_bytes,
         media_kind: media_kind_for_path(&path),
         available,
+        availability_pending: false,
     }
 }
 
@@ -1638,12 +1668,12 @@ mod tests {
     use super::{
         BudgetValue, ByteReadPlan, ClipboardAccess, ClipboardByteBudget,
         ClipboardFormatAvailability, ClipboardListener, ClipboardOwnerWindow, ClipboardReadFormat,
-        FileRootsOutcome, FileTreeSource, MAX_FILE_TREE_BYTES, TreeNode, byte_read_plan,
-        capped_path_size, choose_read_format, clamp_capture_limit,
+        FileRootsOutcome, FileTreeSource, FileWritePlan, MAX_FILE_TREE_BYTES, TreeNode,
+        byte_read_plan, capped_path_size, choose_read_format, clamp_capture_limit,
         decode_custom_bytes_with_budget_counted, decode_nul_terminated_utf16,
         decode_utf16_with_budget, decode_utf16_with_budget_counted, dib_read_plan, dib_to_bmp,
-        encode_drop_files, measure_file_roots_with_budget, media_kind_for_path, parse_drop_files,
-        png_to_dibv5, root_count_plan,
+        encode_drop_files, file_write_plan, make_file_entry, measure_file_roots_with_budget,
+        media_kind_for_path, parse_drop_files, png_to_dibv5, root_count_plan,
     };
     use crate::domain::MediaKind;
 
@@ -1659,6 +1689,59 @@ mod tests {
     #[test]
     fn utf16_decoder_rejects_unpaired_surrogates() {
         assert!(decode_nul_terminated_utf16(&[0xd800, 0]).is_err());
+    }
+
+    #[test]
+    fn available_file_entries_keep_the_file_drop_format() {
+        let directory = tempdir().unwrap();
+        let first = directory.path().join("first.txt");
+        let second = directory.path().join("second.txt");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let entries = vec![
+            make_file_entry(first.clone(), 5, true),
+            make_file_entry(second.clone(), 6, true),
+        ];
+
+        assert_eq!(
+            file_write_plan(&entries).unwrap(),
+            FileWritePlan::FileDrop(vec![first, second])
+        );
+    }
+
+    #[test]
+    fn unavailable_or_missing_file_entries_fall_back_to_unicode_paths() {
+        let unavailable = make_file_entry(PathBuf::from(r"C:\missing.txt"), 10, false);
+        let stale_available = make_file_entry(PathBuf::from(r"C:\also-missing.txt"), 12, true);
+
+        assert_eq!(
+            file_write_plan(&[unavailable]).unwrap(),
+            FileWritePlan::UnicodeText(r"C:\missing.txt".into())
+        );
+        assert_eq!(
+            file_write_plan(&[stale_available]).unwrap(),
+            FileWritePlan::UnicodeText(r"C:\also-missing.txt".into())
+        );
+    }
+
+    #[test]
+    fn mixed_file_entries_preserve_every_stored_path_in_crlf_text() {
+        let directory = tempdir().unwrap();
+        let available_path = directory.path().join("available.txt");
+        fs::write(&available_path, b"available").unwrap();
+        let unavailable_path = r"C:\gone.txt";
+        let entries = vec![
+            make_file_entry(available_path.clone(), 9, true),
+            make_file_entry(PathBuf::from(unavailable_path), 0, false),
+        ];
+
+        assert_eq!(
+            file_write_plan(&entries).unwrap(),
+            FileWritePlan::UnicodeText(format!(
+                "{}\r\n{unavailable_path}",
+                available_path.to_string_lossy()
+            ))
+        );
     }
 
     #[test]

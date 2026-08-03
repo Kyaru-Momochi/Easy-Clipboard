@@ -16,6 +16,10 @@
         "title": "Easy Clipboard",
         "width": 460,
         "height": 620,
+        "minWidth": 360,
+        "minHeight": 420,
+        "maxWidth": 720,
+        "maxHeight": 820,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
@@ -24,7 +28,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/images/**"]
+      }
     }
   },
   "bundle": {

@@ -110,11 +110,12 @@ export function createHistoryStore(backend: HistoryApi = api) {
   };
   const { subscribe, update } = writable(initialState);
   let currentQuery: HistoryFilter = { ...DEFAULT_QUERY };
-  let refreshEpoch = 0;
+  let refreshLoop: Promise<void> | null = null;
+  let refreshPending = false;
+  let refreshVersion = 0;
   let mutationRevision = 0;
 
-  async function refresh(): Promise<void> {
-    const epoch = ++refreshEpoch;
+  async function performRefresh(version: number): Promise<void> {
     const revision = mutationRevision;
     const query = { ...currentQuery };
     update((state) => ({ ...state, loading: true, error: null }));
@@ -123,7 +124,7 @@ export function createHistoryStore(backend: HistoryApi = api) {
         kind: query.kind === 'all' ? null : query.kind,
         search: query.search
       });
-      if (epoch !== refreshEpoch) {
+      if (version !== refreshVersion) {
         return;
       }
       if (revision !== mutationRevision) {
@@ -132,7 +133,7 @@ export function createHistoryStore(backend: HistoryApi = api) {
       }
       update((state) => ({ ...reconcile(state, [...items]), loading: false }));
     } catch (error) {
-      if (epoch !== refreshEpoch) {
+      if (version !== refreshVersion) {
         return;
       }
       if (revision !== mutationRevision) {
@@ -141,6 +142,38 @@ export function createHistoryStore(backend: HistoryApi = api) {
       }
       update((state) => ({ ...state, loading: false, error: errorMessage(error) }));
     }
+  }
+
+  async function drainRefreshes(): Promise<void> {
+    try {
+      while (refreshPending) {
+        refreshPending = false;
+        await performRefresh(refreshVersion);
+      }
+    } finally {
+      refreshLoop = null;
+    }
+  }
+
+  function startRefreshLoop(): Promise<void> {
+    let resolveLoop!: () => void;
+    let rejectLoop!: (reason: unknown) => void;
+    const loop = new Promise<void>((resolve, reject) => {
+      resolveLoop = resolve;
+      rejectLoop = reject;
+    });
+    refreshLoop = loop;
+    void drainRefreshes().then(resolveLoop, rejectLoop);
+    return loop;
+  }
+
+  function refresh(): Promise<void> {
+    refreshPending = true;
+    refreshVersion += 1;
+    if (refreshLoop === null) {
+      return startRefreshLoop();
+    }
+    return refreshLoop;
   }
 
   function setQuery(query: HistoryFilter): Promise<void> {
@@ -186,7 +219,6 @@ export function createHistoryStore(backend: HistoryApi = api) {
       reconcile(
         {
           ...state,
-          loading: false,
           error: null
         },
         change(state.items)
@@ -194,19 +226,20 @@ export function createHistoryStore(backend: HistoryApi = api) {
     );
   }
 
-  async function pasteItem(id: ItemId): Promise<void> {
-    await runCommand(() => backend.pasteItem(id));
+  async function pasteItem(id: ItemId): Promise<boolean> {
+    return runCommand(() => backend.pasteItem(id));
   }
 
-  async function pasteSelected(): Promise<void> {
+  async function pasteSelected(): Promise<boolean> {
     let selectedId: ItemId | null = null;
     update((state) => {
       selectedId = state.selectedId;
       return state;
     });
     if (selectedId !== null) {
-      await pasteItem(selectedId);
+      return pasteItem(selectedId);
     }
+    return false;
   }
 
   async function copyItem(id: ItemId): Promise<void> {

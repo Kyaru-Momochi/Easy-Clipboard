@@ -261,6 +261,13 @@ impl AppState {
     }
 }
 
+#[cfg(not(windows))]
+impl AppState {
+    pub fn hide_overlay(&self) -> Result<(), AppError> {
+        Err(AppError::Platform)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashSet, sync::Mutex};

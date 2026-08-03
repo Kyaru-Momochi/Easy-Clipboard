@@ -16,6 +16,7 @@ const { invokeMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
+  convertFileSrc: vi.fn((path: string) => path),
   invoke: invokeMock
 }));
 
@@ -146,6 +147,7 @@ describe('typed command API', () => {
     await clipboardApi.saveSettings(validSettings);
     await clipboardApi.openSettings();
     await clipboardApi.revealFile('C:\\file.txt');
+    await clipboardApi.hideOverlay();
     await clipboardApi.exitApp();
 
     expect(invokeMock.mock.calls).toEqual([
@@ -159,6 +161,7 @@ describe('typed command API', () => {
       ['save_settings', { settings: validSettings }],
       ['open_settings'],
       ['reveal_file', { path: 'C:\\file.txt' }],
+      ['hide_overlay'],
       ['exit_app']
     ]);
   });
@@ -234,102 +237,148 @@ describe('createHistoryStore', () => {
     expect(get(store).selectedId).toBe('image-1');
   });
 
-  it('keeps only the latest refresh result when responses arrive out of order', async () => {
+  it('serializes refreshes and coalesces a burst into one trailing latest-query request', async () => {
     const first = deferred<ClipboardItem[]>();
     const second = deferred<ClipboardItem[]>();
     const api = historyApi();
-    api.listHistory
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise);
+    let active = 0;
+    let maxActive = 0;
+    let call = 0;
+    api.listHistory.mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      const response = call++ === 0 ? first : second;
+      try {
+        return await response.promise;
+      } finally {
+        active -= 1;
+      }
+    });
     const store = createHistoryStore(api);
 
+    const imageQuery = store.setQuery({ kind: 'image', search: 'old' });
     const refreshA = store.refresh();
+    const filesQuery = store.setQuery({ kind: 'files', search: '' });
     const refreshB = store.refresh();
-    second.resolve([fixtures[2]]);
-    await refreshB;
 
-    expect(get(store)).toMatchObject({
-      items: [fixtures[2]],
-      loading: false,
-      error: null
-    });
+    expect(api.listHistory).toHaveBeenCalledTimes(1);
+    expect(maxActive).toBe(1);
 
     first.resolve([fixtures[0]]);
-    await refreshA;
+    await vi.waitFor(() => expect(api.listHistory).toHaveBeenCalledTimes(2));
 
-    expect(get(store)).toMatchObject({
-      items: [fixtures[2]],
-      loading: false,
-      error: null
-    });
-  });
-
-  it('ignores an old refresh error after a newer refresh succeeds', async () => {
-    const first = deferred<ClipboardItem[]>();
-    const second = deferred<ClipboardItem[]>();
-    const api = historyApi();
-    api.listHistory
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise);
-    const store = createHistoryStore(api);
-
-    const refreshA = store.refresh();
-    const refreshB = store.refresh();
-    second.resolve([fixtures[1]]);
-    await refreshB;
-    first.reject(new Error('stale failure'));
-    await refreshA;
-
-    expect(get(store)).toMatchObject({
-      items: [fixtures[1]],
-      loading: false,
-      error: null
-    });
-  });
-
-  it('keeps loading until the latest refresh completes', async () => {
-    const first = deferred<ClipboardItem[]>();
-    const second = deferred<ClipboardItem[]>();
-    const api = historyApi();
-    api.listHistory
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise);
-    const store = createHistoryStore(api);
-
-    const refreshA = store.refresh();
-    const refreshB = store.refresh();
-    first.resolve([fixtures[0]]);
-    await refreshA;
-
+    expect(maxActive).toBe(1);
+    expect(api.listHistory.mock.calls).toEqual([
+      [{ kind: 'image', search: 'old' }],
+      [{ kind: 'files', search: '' }]
+    ]);
+    expect(get(store).items).toEqual([]);
     expect(get(store).loading).toBe(true);
 
-    second.resolve([fixtures[1]]);
-    await refreshB;
+    second.resolve([fixtures[2]]);
+    await Promise.all([imageQuery, refreshA, filesQuery, refreshB]);
+
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
+    expect(maxActive).toBe(1);
+    expect(get(store).visibleItems.map((item) => item.id)).toEqual(['files-1']);
+    expect(get(store).selectedId).toBe('files-1');
+    expect(get(store).loading).toBe(false);
+    expect(get(store).error).toBeNull();
+  });
+
+  it('coalesces repeated same-query refreshes while keeping loading until the trailing request', async () => {
+    const first = deferred<ClipboardItem[]>();
+    const second = deferred<ClipboardItem[]>();
+    const api = historyApi();
+    api.listHistory
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const store = createHistoryStore(api);
+
+    const refreshes = [
+      store.refresh(),
+      store.refresh(),
+      store.refresh(),
+      store.refresh()
+    ];
+    expect(api.listHistory).toHaveBeenCalledTimes(1);
+
+    first.resolve([fixtures[0]]);
+    await vi.waitFor(() => expect(api.listHistory).toHaveBeenCalledTimes(2));
+    expect(get(store).items).toEqual([]);
+    expect(get(store).loading).toBe(true);
+
+    second.resolve(fixtures);
+    await Promise.all(refreshes);
+
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
+    expect(get(store).items).toEqual(fixtures);
     expect(get(store).loading).toBe(false);
   });
 
-  it('keeps only the latest query response when queries change in flight', async () => {
-    const imageResponse = deferred<ClipboardItem[]>();
-    const filesResponse = deferred<ClipboardItem[]>();
+  it('establishes single-flight before publishing loading state to subscribers', async () => {
+    const first = deferred<ClipboardItem[]>();
+    const second = deferred<ClipboardItem[]>();
+    const api = historyApi();
+    let active = 0;
+    let maxActive = 0;
+    let call = 0;
+    api.listHistory.mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      const response = call++ === 0 ? first : second;
+      try {
+        return await response.promise;
+      } finally {
+        active -= 1;
+      }
+    });
+    const store = createHistoryStore(api);
+    let reentrantRefresh: Promise<void> | null = null;
+    const unsubscribe = store.subscribe((state) => {
+      if (state.loading && reentrantRefresh === null) {
+        reentrantRefresh = store.refresh();
+      }
+    });
+
+    const initialRefresh = store.refresh();
+
+    expect(api.listHistory).toHaveBeenCalledTimes(1);
+    expect(maxActive).toBe(1);
+    first.resolve(fixtures);
+    await vi.waitFor(() => expect(api.listHistory).toHaveBeenCalledTimes(2));
+    second.resolve(fixtures);
+    await Promise.all([initialRefresh, reentrantRefresh]);
+    unsubscribe();
+
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
+    expect(maxActive).toBe(1);
+  });
+
+  it('ignores a superseded refresh error before the trailing refresh succeeds', async () => {
+    const first = deferred<ClipboardItem[]>();
+    const second = deferred<ClipboardItem[]>();
     const api = historyApi();
     api.listHistory
-      .mockImplementationOnce(() => imageResponse.promise)
-      .mockImplementationOnce(() => filesResponse.promise);
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
     const store = createHistoryStore(api);
 
     const imageQuery = store.setQuery({ kind: 'image', search: '' });
     const filesQuery = store.setQuery({ kind: 'files', search: '' });
-    filesResponse.resolve([fixtures[2]]);
-    await filesQuery;
-    imageResponse.resolve([fixtures[1]]);
-    await imageQuery;
+    first.reject(new Error('stale failure'));
+    await vi.waitFor(() => expect(api.listHistory).toHaveBeenCalledTimes(2));
+    expect(get(store).error).toBeNull();
+    expect(get(store).loading).toBe(true);
 
-    expect(api.listHistory.mock.calls).toEqual([
-      [{ kind: 'image', search: '' }],
-      [{ kind: 'files', search: '' }]
-    ]);
-    expect(get(store).visibleItems.map((item) => item.id)).toEqual(['files-1']);
-    expect(get(store).selectedId).toBe('files-1');
+    second.resolve([fixtures[2]]);
+    await Promise.all([imageQuery, filesQuery]);
+
+    expect(get(store)).toMatchObject({
+      items: [fixtures[2]],
+      loading: false,
+      error: null
+    });
   });
 
   it('queries the backend again when a narrow filter expands to all', async () => {
@@ -404,19 +453,23 @@ describe('createHistoryStore', () => {
     api.listHistory.mockImplementationOnce(() => pending.promise);
 
     const refresh = store.refresh();
-    await store.deleteItem('text-1');
+    const deletion = store.deleteItem('text-1');
+    await vi.waitFor(() =>
+      expect(get(store).items.map((item) => item.id)).toEqual(['image-1', 'files-1'])
+    );
 
-    expect(api.listHistory).toHaveBeenCalledTimes(3);
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
     expect(get(store)).toMatchObject({
       items: [fixtures[1], fixtures[2]],
       visibleItems: [fixtures[1], fixtures[2]],
       selectedId: 'image-1',
-      loading: false,
+      loading: true,
       error: null
     });
 
     pending.resolve(fixtures);
-    await refresh;
+    await Promise.all([refresh, deletion]);
+    expect(api.listHistory).toHaveBeenCalledTimes(3);
 
     expect(get(store)).toMatchObject({
       items: [fixtures[1], fixtures[2]],
@@ -435,10 +488,14 @@ describe('createHistoryStore', () => {
     api.listHistory.mockImplementationOnce(() => pending.promise);
 
     const refresh = store.refresh();
-    await store.clearHistory();
-    expect(api.listHistory).toHaveBeenCalledTimes(3);
+    const clearing = store.clearHistory();
+    await vi.waitFor(() =>
+      expect(get(store).items.map((item) => item.id)).toEqual(['image-1'])
+    );
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
     pending.resolve(fixtures);
-    await refresh;
+    await Promise.all([refresh, clearing]);
+    expect(api.listHistory).toHaveBeenCalledTimes(3);
 
     expect(get(store)).toMatchObject({
       items: [fixtures[1]],
@@ -471,8 +528,13 @@ describe('createHistoryStore', () => {
 
     const queryRefresh = store.setQuery({ kind: 'all', search: 'needle' });
     const favorite = store.setFavorite('text-1', true);
+    staleQuery.resolve([
+      { ...knownMatch, isFavorite: false },
+      tailMatch
+    ]);
+    await vi.waitFor(() => expect(api.listHistory).toHaveBeenCalledTimes(3));
     authoritative.resolve([knownMatch, tailMatch]);
-    await favorite;
+    await Promise.all([queryRefresh, favorite]);
 
     expect(api.listHistory).toHaveBeenLastCalledWith({
       kind: null,
@@ -485,11 +547,6 @@ describe('createHistoryStore', () => {
       error: null
     });
 
-    staleQuery.resolve([
-      { ...knownMatch, isFavorite: false },
-      tailMatch
-    ]);
-    await queryRefresh;
     expect(get(store).items).toEqual([knownMatch, tailMatch]);
   });
 
@@ -501,10 +558,14 @@ describe('createHistoryStore', () => {
     api.listHistory.mockImplementationOnce(() => pending.promise);
 
     const refresh = store.refresh();
-    await store.deleteItem('text-1');
-    expect(api.listHistory).toHaveBeenCalledTimes(3);
+    const deletion = store.deleteItem('text-1');
+    await vi.waitFor(() =>
+      expect(get(store).items.map((item) => item.id)).toEqual(['image-1', 'files-1'])
+    );
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
     pending.reject(new Error('stale refresh failure'));
-    await refresh;
+    await Promise.all([refresh, deletion]);
+    expect(api.listHistory).toHaveBeenCalledTimes(3);
 
     expect(get(store)).toMatchObject({
       items: [fixtures[1], fixtures[2]],
@@ -566,17 +627,17 @@ describe('createHistoryStore', () => {
     const refreshA = store.refresh();
     const deletion = store.deleteItem('text-1');
     await mutationApplied;
-    expect(api.listHistory).toHaveBeenCalledTimes(3);
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
     expect(get(store).loading).toBe(true);
 
     oldRefresh.resolve(fixtures);
-    await refreshA;
+    await vi.waitFor(() => expect(api.listHistory).toHaveBeenCalledTimes(3));
 
     expect(get(store).loading).toBe(true);
     expect(get(store).items.map((item) => item.id)).toEqual(['image-1', 'files-1']);
 
     newRefresh.resolve([fixtures[1], fixtures[2]]);
-    await deletion;
+    await Promise.all([refreshA, deletion]);
     expect(get(store)).toMatchObject({
       items: [fixtures[1], fixtures[2]],
       visibleItems: [fixtures[1], fixtures[2]],
@@ -646,12 +707,26 @@ describe('createHistoryStore', () => {
     const before = get(store);
 
     await store.copyItem('files-1');
-    await store.pasteItem('image-1');
-    await store.pasteSelected();
+    const directPasteSucceeded = await store.pasteItem('image-1');
+    const selectedPasteSucceeded = await store.pasteSelected();
 
     expect(api.copyItem).toHaveBeenCalledWith('files-1');
     expect(api.pasteItem.mock.calls).toEqual([['image-1'], ['text-1']]);
+    expect(directPasteSucceeded).toBe(true);
+    expect(selectedPasteSucceeded).toBe(true);
     expect(get(store)).toEqual(before);
+  });
+
+  it('returns false when paste fails while preserving the command error', async () => {
+    const api = historyApi();
+    api.pasteItem.mockRejectedValueOnce(new Error('paste failed'));
+    const store = createHistoryStore(api);
+    await store.refresh();
+
+    const succeeded = await store.pasteSelected();
+
+    expect(succeeded).toBe(false);
+    expect(get(store).error).toBe('paste failed');
   });
 
   it('records command errors without applying optimistic state', async () => {

@@ -68,6 +68,7 @@ fn cf_hdrop_file_list_round_trip() {
             size_bytes: 5,
             media_kind: MediaKind::Audio,
             available: true,
+            availability_pending: false,
         }],
     };
 

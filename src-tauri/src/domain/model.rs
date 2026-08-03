@@ -34,6 +34,8 @@ pub struct FileEntry {
     pub size_bytes: u64,
     pub media_kind: MediaKind,
     pub available: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub availability_pending: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -146,6 +148,7 @@ mod tests {
             size_bytes: 1_024,
             media_kind: MediaKind::Audio,
             available: true,
+            availability_pending: false,
         };
         let expected_json = json!({
             "path": r"C:\media\song.mp3",
@@ -160,6 +163,28 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<FileEntry>(expected_json).unwrap(),
             entry
+        );
+    }
+
+    #[test]
+    fn file_entry_availability_pending_is_backward_compatible_and_sparse() {
+        let legacy_json = json!({
+            "path": r"C:\media\song.mp3",
+            "name": "song.mp3",
+            "extension": "mp3",
+            "sizeBytes": 1_024,
+            "mediaKind": "audio",
+            "available": true
+        });
+
+        let mut entry = serde_json::from_value::<FileEntry>(legacy_json.clone()).unwrap();
+        assert!(!entry.availability_pending);
+        assert_eq!(serde_json::to_value(&entry).unwrap(), legacy_json);
+
+        entry.availability_pending = true;
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap()["availabilityPending"],
+            true
         );
     }
 
@@ -238,6 +263,7 @@ mod tests {
                 size_bytes: 42,
                 media_kind: MediaKind::Other,
                 available: false,
+                availability_pending: false,
             }],
         };
         let expected_json = json!({

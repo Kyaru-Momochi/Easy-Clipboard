@@ -6,6 +6,17 @@ pub mod platform;
 pub mod state;
 pub mod storage;
 
+fn complete_capture<E>(
+    result: Result<clipboard::CaptureResult, error::AppError>,
+    notify: impl FnOnce() -> Result<(), E>,
+) -> Result<(), error::AppError> {
+    let result = result?;
+    if matches!(result, clipboard::CaptureResult::Stored(_)) {
+        let _ = notify();
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn handle_global_shortcut<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -83,6 +94,7 @@ pub fn run() {
                 })?;
                 let hwnd = window.hwnd()?;
                 let overlay = platform::OverlayController::attach(hwnd.0 as isize)?;
+                let history_window = window.clone();
                 let overlay = Arc::new(platform::OverlayRuntime::new(overlay, window));
 
                 let app_data = app.path().app_data_dir()?;
@@ -106,7 +118,11 @@ pub fn run() {
                     .name("easy-clipboard-capture".into())
                     .spawn(move || {
                         while updates.recv().is_ok() {
-                            capture_gate.dispatch_capture(|| capture.capture_now().map(|_| ()));
+                            capture_gate.dispatch_capture(|| {
+                                complete_capture(capture.capture_now(), || {
+                                    platform::emit_history_changed(&history_window)
+                                })
+                            });
                         }
                     })
                     .map_err(|_| error::AppError::Platform)?;
@@ -158,6 +174,7 @@ pub fn run() {
             commands::save_settings,
             commands::open_settings,
             commands::reveal_file,
+            commands::hide_overlay,
             commands::exit_app
         ])
         .run(tauri::generate_context!())
@@ -166,6 +183,75 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
+    use super::complete_capture;
+    use crate::{
+        clipboard::CaptureResult,
+        domain::{ClipboardItem, ClipboardKind, ClipboardPayload, ItemId},
+        error::AppError,
+    };
+
+    fn stored_capture() -> CaptureResult {
+        CaptureResult::Stored(ClipboardItem {
+            id: ItemId("stored".into()),
+            kind: ClipboardKind::Text,
+            payload: ClipboardPayload::Text {
+                plain: "stored".into(),
+                html: None,
+                rtf: None,
+            },
+            fingerprint: "fingerprint".into(),
+            preview: "stored".into(),
+            byte_size: 6,
+            is_favorite: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+    }
+
+    #[test]
+    fn capture_worker_notifies_only_for_stored_results() {
+        let notifications = Cell::new(0);
+
+        for result in [
+            stored_capture(),
+            CaptureResult::IgnoredEmpty,
+            CaptureResult::IgnoredOversize {
+                measured: 2,
+                limit: 1,
+            },
+            CaptureResult::IgnoredSelfWrite,
+        ] {
+            complete_capture(Ok(result), || -> Result<(), &'static str> {
+                notifications.set(notifications.get() + 1);
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        assert_eq!(notifications.get(), 1);
+    }
+
+    #[test]
+    fn capture_notification_failure_does_not_rewrite_success() {
+        let result = complete_capture(Ok(stored_capture()), || Err::<(), _>("webview unavailable"));
+
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn capture_failure_never_notifies() {
+        let notifications = Cell::new(0);
+        let result = complete_capture(Err(AppError::Platform), || {
+            notifications.set(notifications.get() + 1);
+            Ok::<(), ()>(())
+        });
+
+        assert_eq!(result, Err(AppError::Platform));
+        assert_eq!(notifications.get(), 0);
+    }
+
     #[test]
     fn runtime_app_state_access_is_confined_to_windows_only_handlers() {
         let source = include_str!("lib.rs");
@@ -205,6 +291,53 @@ mod tests {
                 "core:event:allow-unlisten",
                 "core:window:allow-hide"
             ])
+        );
+    }
+
+    #[test]
+    fn image_asset_protocol_is_enabled_only_for_app_data_images() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let security = &config["app"]["security"];
+
+        assert_eq!(
+            security["assetProtocol"],
+            serde_json::json!({
+                "enable": true,
+                "scope": ["$APPDATA/images/**"]
+            })
+        );
+        assert_eq!(
+            security["csp"],
+            "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost"
+        );
+    }
+
+    #[test]
+    fn clipboard_window_enforces_supported_responsive_bounds() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let window = &config["app"]["windows"][0];
+
+        assert_eq!(window["width"], 460);
+        assert_eq!(window["minWidth"], 360);
+        assert_eq!(window["minHeight"], 420);
+        assert_eq!(window["maxWidth"], 720);
+        assert_eq!(window["maxHeight"], 820);
+    }
+
+    #[test]
+    fn native_hide_command_is_registered_and_delegates_to_app_state() {
+        let runtime = include_str!("lib.rs");
+        let commands = include_str!("commands.rs");
+
+        assert!(
+            runtime.contains("commands::hide_overlay,"),
+            "hide_overlay must be registered in the Tauri invoke handler"
+        );
+        assert!(
+            commands.contains("state.inner().hide_overlay()"),
+            "the command must use AppState's full native overlay lifecycle"
         );
     }
 }

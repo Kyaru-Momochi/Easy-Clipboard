@@ -1,0 +1,59 @@
+<script lang="ts">
+  interface Props {
+    value: string;
+    onSearch: (value: string) => void;
+  }
+
+  let { value, onSearch }: Props = $props();
+
+  function forwardValue(event: Event): void {
+    onSearch((event.currentTarget as HTMLInputElement).value);
+  }
+</script>
+
+<label class="search-field">
+  <span aria-hidden="true" class="search-icon">⌕</span>
+  <input
+    type="search"
+    aria-label="搜索剪贴板历史"
+    placeholder="搜索剪贴板历史"
+    autocomplete="off"
+    spellcheck="false"
+    {value}
+    oninput={forwardValue}
+  />
+</label>
+
+<style>
+  .search-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.55rem;
+    min-height: 2.6rem;
+    padding: 0 0.8rem;
+    border: 1px solid var(--ui-border, #d7dce5);
+    border-radius: 0.75rem;
+    background: var(--ui-control, #f7f8fa);
+  }
+
+  .search-field:focus-within {
+    border-color: var(--ui-accent, #5068d8);
+    outline: 2px solid color-mix(in srgb, var(--ui-accent, #5068d8) 25%, transparent);
+  }
+
+  .search-icon {
+    color: var(--ui-muted, #697181);
+    font-size: 1.15rem;
+  }
+
+  input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    color: inherit;
+    background: transparent;
+    font: inherit;
+  }
+</style>

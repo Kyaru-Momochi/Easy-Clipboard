@@ -14,6 +14,7 @@ pub const SEARCH_INPUT_EVENT: &str = "search-input";
 pub const SELECTION_MOVE_EVENT: &str = "selection-move";
 pub const SELECTION_PASTE_EVENT: &str = "selection-paste";
 pub const OVERLAY_HIDE_EVENT: &str = "overlay-hide";
+pub const HISTORY_CHANGED_EVENT: &str = "history-changed";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "action", rename_all = "camelCase")]
@@ -90,7 +91,7 @@ impl OverlayRuntime {
             }
         };
         let window = self.window.clone();
-        match thread::Builder::new()
+        let result = match thread::Builder::new()
             .name("easy-clipboard-overlay-events".into())
             .spawn(move || bridge_events(&window, receiver))
         {
@@ -103,7 +104,8 @@ impl OverlayRuntime {
                 let _ = self.overlay.hide();
                 Err(AppError::Platform)
             }
-        }
+        };
+        notify_history_changed_after_success(result, || emit_history_changed(&self.window))
     }
 
     pub fn hide(&self) -> Result<(), AppError> {
@@ -133,6 +135,23 @@ impl Drop for OverlayRuntime {
         }
         let _ = self.overlay.hide();
     }
+}
+
+pub fn emit_history_changed(window: &WebviewWindow) -> tauri::Result<()> {
+    window.emit(HISTORY_CHANGED_EVENT, ())
+}
+
+fn notify_history_changed_after_success<T, E, N>(
+    result: Result<T, AppError>,
+    notify: N,
+) -> Result<T, AppError>
+where
+    N: FnOnce() -> Result<(), E>,
+{
+    if result.is_ok() {
+        let _ = notify();
+    }
+    result
 }
 
 fn stop_then_join_bridge<T>(
@@ -167,10 +186,11 @@ fn emit_event(window: &WebviewWindow, event: OverlayEvent) -> tauri::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::{
-        OVERLAY_HIDE_EVENT, OverlayEvent, SEARCH_INPUT_EVENT, SELECTION_MOVE_EVENT,
-        SELECTION_PASTE_EVENT, SearchInputPayload, SelectionMovePayload, event_for_action,
-        stop_then_join_bridge,
+        HISTORY_CHANGED_EVENT, OVERLAY_HIDE_EVENT, OverlayEvent, SEARCH_INPUT_EVENT,
+        SELECTION_MOVE_EVENT, SELECTION_PASTE_EVENT, SearchInputPayload, SelectionMovePayload,
+        event_for_action, notify_history_changed_after_success, stop_then_join_bridge,
     };
+    use crate::error::AppError;
     use crate::platform::KeyAction;
 
     #[test]
@@ -179,6 +199,37 @@ mod tests {
         assert_eq!(SELECTION_MOVE_EVENT, "selection-move");
         assert_eq!(SELECTION_PASTE_EVENT, "selection-paste");
         assert_eq!(OVERLAY_HIDE_EVENT, "overlay-hide");
+        assert_eq!(HISTORY_CHANGED_EVENT, "history-changed");
+    }
+
+    #[test]
+    fn successful_show_notification_is_best_effort_and_never_rewrites_primary_result() {
+        let mut notifications = 0;
+        let result = notify_history_changed_after_success(
+            Ok::<_, AppError>(42),
+            || -> Result<(), &'static str> {
+                notifications += 1;
+                Err("webview unavailable")
+            },
+        );
+
+        assert_eq!(result, Ok(42));
+        assert_eq!(notifications, 1);
+    }
+
+    #[test]
+    fn failed_show_never_emits_history_changed() {
+        let mut notifications = 0;
+        let result = notify_history_changed_after_success(
+            Err::<(), _>(AppError::Platform),
+            || -> Result<(), &'static str> {
+                notifications += 1;
+                Ok(())
+            },
+        );
+
+        assert_eq!(result, Err(AppError::Platform));
+        assert_eq!(notifications, 0);
     }
 
     #[test]

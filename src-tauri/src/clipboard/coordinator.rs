@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, MutexGuard, RwLock,
         atomic::{AtomicU64, Ordering},
@@ -169,7 +169,6 @@ where
     pub fn copy_item(&self, id: &ItemId) -> Result<(), AppError> {
         let _operation = self.lock_operation()?;
         let item = self.repository.get(id)?;
-        ensure_available(&item.payload)?;
         self.write_item(&item)
     }
 
@@ -222,7 +221,10 @@ fn replace_image_paths(
 fn ensure_available(payload: &ClipboardPayload) -> Result<(), AppError> {
     if matches!(
         payload,
-        ClipboardPayload::Files { entries } if entries.iter().any(|entry| !entry.available)
+        ClipboardPayload::Files { entries }
+            if entries
+                .iter()
+                .any(|entry| !entry.available || !Path::new(&entry.path).exists())
     ) {
         Err(AppError::ClipboardItemUnavailable)
     } else {

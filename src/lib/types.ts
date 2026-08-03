@@ -11,6 +11,7 @@ export interface FileEntry {
   sizeBytes: number;
   mediaKind: MediaKind;
   available: boolean;
+  availabilityPending?: boolean;
 }
 
 export interface TextPayload {

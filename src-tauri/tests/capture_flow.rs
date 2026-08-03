@@ -220,6 +220,7 @@ fn unavailable_file_item() -> ClipboardItem {
                 size_bytes: 10,
                 media_kind: MediaKind::Other,
                 available: false,
+                availability_pending: false,
             }],
         },
         fingerprint: "missing-file-fingerprint".into(),
@@ -748,7 +749,7 @@ fn copy_item_writes_without_paste_and_suppresses_exact_sequence() {
 }
 
 #[test]
-fn missing_file_is_rejected_without_write_or_paste() {
+fn missing_file_can_be_copied_without_paste_but_cannot_be_pasted() {
     let temp = TempDir::new().unwrap();
     let clipboard = Arc::new(FakeClipboard::default());
     let paste = Arc::new(FakePasteTarget::default());
@@ -761,6 +762,41 @@ fn missing_file_is_rejected_without_write_or_paste() {
         AppSettings::default(),
     );
     let item = unavailable_file_item();
+    repository
+        .upsert(item.clone(), UpsertDecision::Insert { evict: None })
+        .unwrap();
+
+    coordinator.copy_item(&item.id).unwrap();
+
+    assert_eq!(clipboard.writes(), vec![item.payload.clone()]);
+    assert_eq!(paste.pastes.load(Ordering::SeqCst), 0);
+
+    clipboard.state.lock().unwrap().writes.clear();
+    let error = coordinator.paste_item(&item.id).unwrap_err();
+
+    assert_eq!(error.code(), "clipboardItemUnavailable");
+    assert!(clipboard.writes().is_empty());
+    assert_eq!(paste.pastes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn stale_file_marked_available_is_revalidated_before_paste() {
+    let temp = TempDir::new().unwrap();
+    let clipboard = Arc::new(FakeClipboard::default());
+    let paste = Arc::new(FakePasteTarget::default());
+    let clock = Arc::new(FixedClock::new(10));
+    let (repository, coordinator) = coordinator(
+        &temp,
+        Arc::clone(&clipboard),
+        Arc::clone(&paste),
+        clock,
+        AppSettings::default(),
+    );
+    let mut item = unavailable_file_item();
+    let ClipboardPayload::Files { entries } = &mut item.payload else {
+        unreachable!("fixture is a file payload");
+    };
+    entries[0].available = true;
     repository
         .upsert(item.clone(), UpsertDecision::Insert { evict: None })
         .unwrap();

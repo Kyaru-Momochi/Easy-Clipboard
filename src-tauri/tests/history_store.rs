@@ -106,6 +106,7 @@ fn files_item(id: &str, fingerprint: &str, preview: &str, updated_at_ms: i64) ->
                 size_bytes: 7,
                 media_kind: MediaKind::Other,
                 available: true,
+                availability_pending: false,
             }],
         },
         fingerprint: fingerprint.into(),

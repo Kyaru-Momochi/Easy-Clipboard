@@ -1,11 +1,14 @@
 use crate::{
     domain::{AppSettings, ClipboardItem, HistoryPolicy, HistoryQuery, ItemId},
     error::AppError,
-    state::AppState,
+    state::{AppState, CommandHistory},
 };
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
+
+const FILE_AVAILABILITY_PROBE_LIMIT: usize = 512;
 
 pub struct CommandService<'a> {
     state: &'a AppState,
@@ -17,7 +20,7 @@ impl<'a> CommandService<'a> {
     }
 
     pub fn list_history(&self, query: &HistoryQuery) -> Result<Vec<ClipboardItem>, AppError> {
-        self.state.history.list(query)
+        list_history_from(self.state.history.as_ref(), query)
     }
 
     pub fn paste_item(&self, id: &ItemId) -> Result<(), AppError> {
@@ -121,6 +124,53 @@ impl<'a> CommandService<'a> {
     }
 }
 
+fn list_history_from(
+    history: &dyn CommandHistory,
+    query: &HistoryQuery,
+) -> Result<Vec<ClipboardItem>, AppError> {
+    let mut items = history.list(query)?;
+    refresh_file_availability_with_probe(&mut items, FILE_AVAILABILITY_PROBE_LIMIT, Path::exists);
+    Ok(items)
+}
+
+fn refresh_file_availability_with_probe(
+    items: &mut [ClipboardItem],
+    probe_limit: usize,
+    mut exists: impl FnMut(&Path) -> bool,
+) {
+    // This bounded refresh only improves UI hints. Paste revalidates every source path and
+    // remains the safety boundary, so unprobed stored-available entries stay pasteable but
+    // carry an explicit pending hint.
+    let mut probes_remaining = probe_limit;
+    for item in items {
+        let crate::domain::ClipboardPayload::Files { entries } = &mut item.payload else {
+            continue;
+        };
+        for entry in entries {
+            if !entry.available {
+                entry.availability_pending = false;
+                continue;
+            }
+            if probes_remaining == 0 {
+                entry.availability_pending = true;
+                continue;
+            }
+            probes_remaining -= 1;
+            entry.available = exists(Path::new(&entry.path));
+            entry.availability_pending = false;
+        }
+    }
+}
+
+async fn list_history_async(
+    history: Arc<dyn CommandHistory>,
+    query: HistoryQuery,
+) -> Result<Vec<ClipboardItem>, AppError> {
+    tauri::async_runtime::spawn_blocking(move || list_history_from(history.as_ref(), &query))
+        .await
+        .map_err(|_| AppError::Platform)?
+}
+
 const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
 const MAX_ITEM_BYTES: u64 = 500 * BYTES_PER_MEGABYTE;
 
@@ -139,11 +189,15 @@ fn validate_settings(settings: &AppSettings) -> Result<(), AppError> {
 }
 
 #[tauri::command]
-pub fn list_history(
+pub async fn list_history(
     state: State<'_, AppState>,
     query: HistoryQuery,
 ) -> Result<Vec<ClipboardItem>, AppError> {
-    CommandService::new(state.inner()).list_history(&query)
+    let history = {
+        let app_state = state.inner();
+        Arc::clone(&app_state.history)
+    };
+    list_history_async(history, query).await
 }
 
 #[tauri::command]
@@ -222,6 +276,11 @@ pub fn reveal_file(app: AppHandle, path: String) -> Result<(), AppError> {
     }
 }
 
+#[tauri::command]
+pub fn hide_overlay(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.inner().hide_overlay()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum RevealAction {
     RevealFile(PathBuf),
@@ -284,18 +343,20 @@ fn prepare_for_exit(state: &AppState) -> Result<(), AppError> {
 mod tests {
     use std::collections::VecDeque;
     use std::fs;
-    #[cfg(windows)]
     use std::path::Path;
     #[cfg(windows)]
     use std::sync::mpsc;
     use std::sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     };
     #[cfg(windows)]
     use std::thread;
 
-    use super::{CommandService, RevealAction, reveal_action};
+    use super::{
+        CommandService, FILE_AVAILABILITY_PROBE_LIMIT, RevealAction, list_history_async,
+        refresh_file_availability_with_probe, reveal_action,
+    };
     #[cfg(windows)]
     use super::{existing_directory_target, prepare_for_exit};
     #[cfg(windows)]
@@ -305,8 +366,8 @@ mod tests {
             CaptureCoordinator, ClipboardBackend, PasteTarget, RawClipboardSnapshot, SystemClock,
         },
         domain::{
-            AppSettings, ClipboardItem, ClipboardKind, ClipboardPayload, HistoryQuery, ItemId,
-            UpsertDecision,
+            AppSettings, ClipboardItem, ClipboardKind, ClipboardPayload, FileEntry, HistoryQuery,
+            ItemId, MediaKind, UpsertDecision,
         },
         error::AppError,
         state::{AppState, AutostartControl, ClipboardActions, CommandHistory, HotkeyControl},
@@ -372,10 +433,20 @@ mod tests {
         settings: Mutex<AppSettings>,
         save_results: Mutex<VecDeque<Result<(), AppError>>>,
         save_attempts: Mutex<Vec<AppSettings>>,
+        list_threads: Mutex<Vec<std::thread::ThreadId>>,
+        panic_on_list: AtomicBool,
     }
 
     impl CommandHistory for FakeHistory {
         fn list(&self, query: &HistoryQuery) -> Result<Vec<ClipboardItem>, AppError> {
+            self.list_threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            assert!(
+                !self.panic_on_list.load(Ordering::SeqCst),
+                "simulated history panic"
+            );
             Ok(self
                 .items
                 .lock()
@@ -528,6 +599,8 @@ mod tests {
             settings: Mutex::new(AppSettings::default()),
             save_results: Mutex::new(VecDeque::new()),
             save_attempts: Mutex::new(Vec::new()),
+            list_threads: Mutex::new(Vec::new()),
+            panic_on_list: AtomicBool::new(false),
         });
         let clipboard = Arc::new(FakeClipboard::default());
         let hotkey = Arc::new(FakeHotkey {
@@ -576,6 +649,157 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["image"]
         );
+    }
+
+    #[test]
+    fn list_history_refreshes_file_availability_without_persisting_downgrades() {
+        let directory = TempDir::new().unwrap();
+        let available_path = directory.path().join("available.txt");
+        let originally_unavailable_path = directory.path().join("untrusted.txt");
+        fs::write(&available_path, "available").unwrap();
+        fs::write(&originally_unavailable_path, "untrusted").unwrap();
+        let fixture = fixture();
+        fixture.history.items.lock().unwrap().extend([
+            file_item("available-file", &available_path, true),
+            file_item(
+                "originally-unavailable",
+                &originally_unavailable_path,
+                false,
+            ),
+        ]);
+        let service = CommandService::new(&fixture.state);
+
+        let listed = service.list_history(&HistoryQuery::default()).unwrap();
+        assert!(listed_file_available(&listed, "available-file"));
+        assert!(!listed_file_available(&listed, "originally-unavailable"));
+
+        fs::remove_file(&available_path).unwrap();
+        let listed = service.list_history(&HistoryQuery::default()).unwrap();
+        assert!(!listed_file_available(&listed, "available-file"));
+        assert!(!listed_file_available(&listed, "originally-unavailable"));
+
+        fs::write(&available_path, "restored").unwrap();
+        let listed = service.list_history(&HistoryQuery::default()).unwrap();
+        assert!(listed_file_available(&listed, "available-file"));
+        assert!(!listed_file_available(&listed, "originally-unavailable"));
+    }
+
+    #[test]
+    fn availability_refresh_marks_entries_beyond_the_probe_budget_pending() {
+        let mut items = vec![file_item("unavailable", Path::new("unavailable"), false)];
+        items.extend((0..=FILE_AVAILABILITY_PROBE_LIMIT).map(|index| {
+            file_item(
+                &format!("available-{index}"),
+                Path::new(&format!("available-{index}")),
+                true,
+            )
+        }));
+        listed_file_entry_mut(&mut items, "unavailable").availability_pending = true;
+        listed_file_entry_mut(&mut items, "available-0").availability_pending = true;
+        let mut probed = Vec::new();
+
+        refresh_file_availability_with_probe(&mut items, FILE_AVAILABILITY_PROBE_LIMIT, |path| {
+            probed.push(path.to_string_lossy().into_owned());
+            false
+        });
+
+        assert_eq!(probed.len(), FILE_AVAILABILITY_PROBE_LIMIT);
+        assert!(!probed.iter().any(|path| path == "unavailable"));
+        assert!(!listed_file_available(&items, "unavailable"));
+        assert!(!listed_file_pending(&items, "unavailable"));
+        assert!(!listed_file_available(&items, "available-0"));
+        assert!(!listed_file_pending(&items, "available-0"));
+        assert!(!listed_file_available(
+            &items,
+            &format!("available-{}", FILE_AVAILABILITY_PROBE_LIMIT - 1)
+        ));
+        assert!(
+            listed_file_available(
+                &items,
+                &format!("available-{FILE_AVAILABILITY_PROBE_LIMIT}")
+            ),
+            "unprobed entries must remain eligible for paste-time validation"
+        );
+        assert!(
+            listed_file_pending(
+                &items,
+                &format!("available-{FILE_AVAILABILITY_PROBE_LIMIT}")
+            ),
+            "unprobed entries must be explicitly marked pending"
+        );
+    }
+
+    #[test]
+    fn async_history_listing_runs_on_a_blocking_worker_and_sanitizes_join_failures() {
+        let fixture = fixture();
+        let caller_thread = std::thread::current().id();
+
+        tauri::async_runtime::block_on(list_history_async(
+            Arc::clone(&fixture.state.history),
+            HistoryQuery::default(),
+        ))
+        .unwrap();
+
+        let list_threads = fixture.history.list_threads.lock().unwrap();
+        assert_eq!(list_threads.len(), 1);
+        assert_ne!(list_threads[0], caller_thread);
+        drop(list_threads);
+
+        fixture.history.panic_on_list.store(true, Ordering::SeqCst);
+        let error = tauri::async_runtime::block_on(list_history_async(
+            Arc::clone(&fixture.state.history),
+            HistoryQuery::default(),
+        ))
+        .unwrap_err();
+        assert_eq!(error, AppError::Platform);
+    }
+
+    fn file_item(id: &str, path: &Path, available: bool) -> ClipboardItem {
+        ClipboardItem {
+            id: ItemId(id.into()),
+            kind: ClipboardKind::Files,
+            payload: ClipboardPayload::Files {
+                entries: vec![FileEntry {
+                    path: path.to_string_lossy().into_owned(),
+                    name: path.file_name().unwrap().to_string_lossy().into_owned(),
+                    extension: "txt".into(),
+                    size_bytes: 1,
+                    media_kind: MediaKind::Other,
+                    available,
+                    availability_pending: false,
+                }],
+            },
+            fingerprint: format!("fingerprint-{id}"),
+            preview: id.into(),
+            byte_size: 1,
+            is_favorite: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        }
+    }
+
+    fn listed_file_available(items: &[ClipboardItem], id: &str) -> bool {
+        listed_file_entry(items, id).available
+    }
+
+    fn listed_file_pending(items: &[ClipboardItem], id: &str) -> bool {
+        listed_file_entry(items, id).availability_pending
+    }
+
+    fn listed_file_entry<'a>(items: &'a [ClipboardItem], id: &str) -> &'a FileEntry {
+        let item = items.iter().find(|item| item.id.0 == id).unwrap();
+        let ClipboardPayload::Files { entries } = &item.payload else {
+            panic!("expected files payload");
+        };
+        &entries[0]
+    }
+
+    fn listed_file_entry_mut<'a>(items: &'a mut [ClipboardItem], id: &str) -> &'a mut FileEntry {
+        let item = items.iter_mut().find(|item| item.id.0 == id).unwrap();
+        let ClipboardPayload::Files { entries } = &mut item.payload else {
+            panic!("expected files payload");
+        };
+        &mut entries[0]
     }
 
     #[test]
