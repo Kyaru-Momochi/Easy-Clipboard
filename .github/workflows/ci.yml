@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Test frontend
+        run: npm test
+      - name: Check frontend
+        run: npm run check
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt -- --check
+      - name: Lint Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test Rust
+        working-directory: src-tauri
+        run: cargo test --all-targets
+      - name: Build NSIS installer
+        run: npm run tauri build -- --bundles nsis
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: easy-clipboard-nsis-installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

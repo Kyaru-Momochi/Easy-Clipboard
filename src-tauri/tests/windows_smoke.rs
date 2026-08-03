@@ -15,8 +15,8 @@ fn plain_text_round_trip() {
     let clipboard = WindowsClipboard::new().unwrap();
     let payload = ClipboardPayload::Text {
         plain: "Easy Clipboard smoke \u{1f4cb}".into(),
-        html: None,
-        rtf: None,
+        html: Some("<p>Easy Clipboard <strong>smoke</strong></p>".into()),
+        rtf: Some(br"{\rtf1 Easy Clipboard \b smoke\b0}".to_vec()),
     };
 
     let receipt = clipboard.write(&payload).unwrap();
@@ -26,6 +26,27 @@ fn plain_text_round_trip() {
     assert_eq!(
         snapshot.plain_text.as_deref(),
         Some("Easy Clipboard smoke 📋")
+    );
+}
+
+/// Runs only when a developer deliberately opts into the interactive Windows suite:
+/// `cargo test --test windows_smoke -- --ignored --nocapture`.
+///
+/// Alongside the round-trip tests above, verify in the running application that:
+/// - text and rich text, PNG, audio/video files, and folders appear and can be restored;
+/// - a 51 MB clipboard payload is ignored at the default 50 MB limit;
+/// - `Ctrl+Shift+V` opens the picker but does not paste without an activated item; then, for
+///   each stored type (text/rich text, PNG, audio/video file, and folder), click its entry and
+///   confirm the original target keeps focus and receives the pasted payload;
+/// - window resizing is constrained to its configured minimum and maximum dimensions;
+/// - system, light, and dark themes render correctly;
+/// - the tray pause/resume command stops and restarts capture; and
+/// - history and settings survive an application restart.
+#[test]
+#[ignore = "interactive product smoke checklist; requires a desktop session"]
+fn manual_product_smoke_checklist() {
+    eprintln!(
+        "Run the checklist in this test's documentation while the Easy Clipboard desktop app is running."
     );
 }
 
